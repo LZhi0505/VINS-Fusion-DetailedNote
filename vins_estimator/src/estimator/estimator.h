@@ -95,8 +95,9 @@ class Estimator
     std::mutex mProcess;
     std::mutex mBuf;
     std::mutex mPropagate;
-    queue<pair<double, Eigen::Vector3d>> accBuf;
-    queue<pair<double, Eigen::Vector3d>> gyrBuf;
+    queue<pair<double, Eigen::Vector3d>> accBuf;    // 时间戳, {acc_x, acc_y, acc_z}
+    queue<pair<double, Eigen::Vector3d>> gyrBuf;    // 时间戳, {gyr_x, gyr_y, gyr_z}
+    // 时间戳, {feature_id，[camera_id (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx, vy (归一化相机平面移动速度)]}
     queue<pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1> > > > > > featureBuf;
     double prevTime, curTime;
     bool openExEstimation;

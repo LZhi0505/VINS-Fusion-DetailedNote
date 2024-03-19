@@ -131,7 +131,7 @@ double FeatureTracker::distance(cv::Point2f &pt1, cv::Point2f &pt2)
  * 3、对于前后帧用LK光流跟踪到的匹配特征点，计算基础矩阵，用极线约束进一步剔除outlier点（代码注释掉了）
  * 4、如果特征点不够，剩余的用角点来凑；更新特征点跟踪次数
  * 5、计算特征点归一化相机平面坐标，并计算相对于前一帧的移动速度
- * 6、保存当前帧特征点数据（归一化相机平面坐标，像素坐标，归一化相机平面移动速度）
+ * 6、保存当前帧特征点数据（camera_id, 归一化相机平面坐标，像素坐标，归一化相机平面移动速度）
  * 7、展示，左图特征点用颜色区分跟踪次数（红色少，蓝色多），画个箭头指向前一帧特征点位置，如果是双目，右图画个绿色点
 */
 map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackImage(double _cur_time, const cv::Mat &_img, const cv::Mat &_img1)
@@ -289,7 +289,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
         cur_right_pts.clear();
         cur_un_right_pts.clear();
         right_pts_velocity.clear();
-        cur_un_right_pts_map.clear();
+        cur_un_right_pts_map.clear();   // index: 当前帧右目特征点id, value: 对应去畸变的归一化相机平面坐标x,y
         // 左目存在特征点，则提取右目的
         if(!cur_pts.empty())
         {
@@ -298,7 +298,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
             vector<uchar> status, statusRightLeft;
             vector<float> err;
             // cur left ---- cur right
-            // 当前帧左目-右目之间 进行特征点匹配
+            // 当前帧左目-右目之间 进行特征点匹配：在右目上追踪左目的特征点
             cv::calcOpticalFlowPyrLK(cur_img, rightImg, cur_pts, cur_right_pts, status, err, cv::Size(21, 21), 3);
             // reverse check cur right ---- cur left
             // 同样的反向来一次
@@ -326,8 +326,9 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
             reduceVector(pts_velocity, status);
             */
 
-            // 计算右图特征点在归一化相机平面上的移动速度
+            // 当前帧有目特征点的 像素坐标 转为 归一化相机平面坐标（只包含x,y, 且带畸变校正）
             cur_un_right_pts = undistortedPts(cur_right_pts, m_camera[1]);
+            // 计算右图特征点在归一化相机平面上的移动速度
             right_pts_velocity = ptsVelocity(ids_right, cur_un_right_pts, cur_un_right_pts_map, prev_un_right_pts_map);
         }
         prev_un_right_pts_map = cur_un_right_pts_map;
@@ -339,22 +340,21 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
 
     // 图像
     prev_img = cur_img;
-    // 特征点
-    prev_pts = cur_pts;
-    // 归一化相机平面特征点
-    prev_un_pts = cur_un_pts;
-    prev_un_pts_map = cur_un_pts_map;
+    prev_pts = cur_pts;         // 当前帧左目特征点的 像素坐标
+    prev_un_pts = cur_un_pts;   // 当前帧左目特征点 归一化相机平面x,y坐标
+    prev_un_pts_map = cur_un_pts_map;   // index: 当前帧左目特征点id, value: 对应去畸变的归一化相机平面坐标x,y
     prev_time = cur_time;
     hasPrediction = false;
 
-    prevLeftPtsMap.clear();
+    prevLeftPtsMap.clear();     // index: 当前帧左目特征点id, value: 对应像素坐标
     for(size_t i = 0; i < cur_pts.size(); i++)
         prevLeftPtsMap[ids[i]] = cur_pts[i];
 
     // 添加当前帧特征点
-    // featureFrame: feature_id，[camera_id, x, y, z (归一化相机平面坐标), pu, pv (像素坐标), vx, vy (归一化相机平面移动速度)]
+    // featureFrame: feature_id，[camera_id (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx, vy (归一化相机平面移动速度)]
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> featureFrame;
 
+    // 添加左目，camera_id = 0
     for (size_t i = 0; i < ids.size(); i++)
     {
         int feature_id = ids[i];
@@ -375,7 +375,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
         featureFrame[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
     }
 
-    // 双目的右目 也存入到 featureFrame 中
+    // 双目的右目 也存入到 featureFrame 中, camera_id = 1
     if (!_img1.empty() && stereo_cam)
     {
         for (size_t i = 0; i < ids_right.size(); i++)
@@ -521,8 +521,8 @@ vector<cv::Point2f> FeatureTracker::undistortedPts(vector<cv::Point2f> &pts, cam
  * 计算当前帧归一化相机平面特征点在x、y方向上的移动速度
  * @param ids   特征点id
  * @param pts   当前帧特征点的 归一化相机平面坐标 (只包含x,y, 已去畸变)
- * @param cur_id_pts
- * @param prev_id_pts
+ * @param cur_id_pts    index: 当前帧特征点id, value: 对应归一化相机平面坐标x,y
+ * @param prev_id_pts   index: 前一帧特征点id, value: 对应归一化相机平面坐标x,y
  * @return
  */
 vector<cv::Point2f> FeatureTracker::ptsVelocity(vector<int> &ids, vector<cv::Point2f> &pts, 
@@ -545,8 +545,8 @@ vector<cv::Point2f> FeatureTracker::ptsVelocity(vector<int> &ids, vector<cv::Poi
         for (unsigned int i = 0; i < pts.size(); i++)
         {
             std::map<int, cv::Point2f>::iterator it;
-            it = prev_id_pts.find(ids[i]);  // 可能找不到
-            // 找到了，则计算该点在归一化相机平面上x、y方向的移动速度
+            it = prev_id_pts.find(ids[i]);  // 当前帧特征点可能 匹配不到 前一帧的
+            // 匹配到了，则计算该点在归一化相机平面上x、y方向的移动速度
             if (it != prev_id_pts.end())
             {
                 // 计算点在归一化相机平面上x、y方向的移动速度
@@ -557,7 +557,6 @@ vector<cv::Point2f> FeatureTracker::ptsVelocity(vector<int> &ids, vector<cv::Poi
             // 找不到，则速度设为0
             else
                 pts_velocity.push_back(cv::Point2f(0, 0));
-
         }
     }
     // 前一帧没有特征点，则都设为0

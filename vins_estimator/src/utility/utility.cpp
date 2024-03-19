@@ -11,15 +11,18 @@
 #include <iostream>
 
 /**
- * 计算g对齐到重力加速度方向所需的旋转
-*/
+ * 计算 加速度z轴 对齐到 重力加速度方向 所需的旋转矩阵
+ * @param g IMU两帧间的 平均加速度
+ * @return
+ */
 Eigen::Matrix3d Utility::g2R(const Eigen::Vector3d &g)
 {
     Eigen::Matrix3d R0;
-    Eigen::Vector3d ng1 = g.normalized();
-    // ENU世界坐标系下的z方向（重力加速度方向）
-    Eigen::Vector3d ng2{0, 0, 1.0};
-    // ng1为当前IMU坐标系的z方向，R0 * ng1 = ng2，表示当前IMU坐标系在世界系中的姿态，或者说R0可以将当前IMU坐标系点变换成世界坐标系点
+    Eigen::Vector3d ng1 = g.normalized();   // 归一化的IMU加速度方向
+    Eigen::Vector3d ng2{0, 0, 1.0}; // ENU世界坐标系下的z方向（重力加速度方向）
+
+    // ng1为当前IMU坐标系的z方向
+    // R0 * ng1 = ng2，R0 表示当前IMU坐标系在世界系中的姿态，或者说R0可以将当前IMU坐标系点变换成世界坐标系点
     R0 = Eigen::Quaterniond::FromTwoVectors(ng1, ng2).toRotationMatrix();
 
     // 测试代码
@@ -33,7 +36,7 @@ Eigen::Matrix3d Utility::g2R(const Eigen::Vector3d &g)
     // }
 
     // 我们只想对齐z轴，旋转过程中可能改变了yaw角，再旋转回去
-    double yaw = Utility::R2ypr(R0).x();
+    double yaw = Utility::R2ypr(R0).x();    // 单位为°
     R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
     // R0 = Utility::ypr2R(Eigen::Vector3d{-90, 0, 0}) * R0;
 

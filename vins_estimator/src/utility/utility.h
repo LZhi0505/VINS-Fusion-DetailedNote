@@ -73,7 +73,7 @@ class Utility
     }
 
     /**
-     * 旋转矩阵计算Yaw、Pitch、Roll姿态角
+     * 从旋转矩阵计算 Yaw、Pitch、Roll姿态角，单位为 度°
     */
     static Eigen::Vector3d R2ypr(const Eigen::Matrix3d &R)
     {
@@ -81,6 +81,7 @@ class Utility
         Eigen::Vector3d o = R.col(1);
         Eigen::Vector3d a = R.col(2);
 
+        // 保存欧拉角
         Eigen::Vector3d ypr(3);
         double y = atan2(n(1), n(0));
         double p = atan2(-n(2), n(0) * cos(y) + n(1) * sin(y));
@@ -89,18 +90,27 @@ class Utility
         ypr(1) = p;
         ypr(2) = r;
 
+        // 单位转换为 度 °
         return ypr / M_PI * 180.0;
     }
 
+    /**
+     *
+     * @tparam Derived  模板类型：可为vector3d
+     * @param ypr   输入的欧拉角
+     * @return
+     */
     template <typename Derived>
     static Eigen::Matrix<typename Derived::Scalar, 3, 3> ypr2R(const Eigen::MatrixBase<Derived> &ypr)
     {
         typedef typename Derived::Scalar Scalar_t;
 
+        // 度 转 弧度
         Scalar_t y = ypr(0) / 180.0 * M_PI;
         Scalar_t p = ypr(1) / 180.0 * M_PI;
         Scalar_t r = ypr(2) / 180.0 * M_PI;
 
+        // 创建三个分别绕着 Z、Y、X 轴旋转的旋转矩阵
         Eigen::Matrix<Scalar_t, 3, 3> Rz;
         Rz << cos(y), -sin(y), 0,
             sin(y), cos(y), 0,
@@ -116,6 +126,7 @@ class Utility
             0., cos(r), -sin(r),
             0., sin(r), cos(r);
 
+        // 返回这三个旋转矩阵的组合：先绕 Z 轴旋转（Yaw），再绕 Y 轴旋转（Pitch），最后绕 X 轴旋转（Roll）
         return Rz * Ry * Rx;
     }
 

@@ -235,7 +235,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
 }
 
 /**
- * Camera与IMU初始化，零偏、尺度、重力方向
+ * Camera视觉与IMU初始化，零偏、尺度、重力方向
 */
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x)
 {
@@ -244,9 +244,14 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
      * 1、用相邻两帧之间的相机旋转、IMU积分旋转，构建最小二乘问题，ldlt求解
      * 2、偏置更新后，重新计算IMU积分
     */
+    // 更新得到新的陀螺仪漂移Bgs
+    // 对应视觉IMU对齐的第二部分
+    // 对应https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw中的公式31-34
     solveGyroscopeBias(all_image_frame, Bgs);
 
-    if(LinearAlignment(all_image_frame, g, x))
+    // 初始化速度、重力和尺度因子
+    // 对应 https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw 中的公式34-36
+    if (LinearAlignment(all_image_frame, g, x))
         return true;
     else 
         return false;

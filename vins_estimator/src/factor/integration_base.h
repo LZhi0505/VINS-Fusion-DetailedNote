@@ -74,10 +74,24 @@ class IntegrationBase
     }
 
     /**
-     * 中值积分
-     * 1、前一时刻状态计算当前时刻状态，PVQ，其中Ba，Bg保持不变
-     * 2、计算当前时刻的误差相对于预积分起始时刻的Jacobian，增量误差协方差 todo
-    */
+     * 中值积分递推 Jacobian 和 Covariance
+     * @param _dt
+     * @param _acc_0    上次测量加速度
+     * @param _gyr_0
+     * @param _acc_1    本次测量加速度
+     * @param _gyr_1
+     * @param delta_p   上一次的位移
+     * @param delta_q   上一次的旋转
+     * @param delta_v   上一次的速度
+     * @param linearized_ba
+     * @param linearized_bg
+     * @param result_delta_p    位置变化量计算结果
+     * @param result_delta_q
+     * @param result_delta_v
+     * @param result_linearized_ba
+     * @param result_linearized_bg
+     * @param update_jacobian   是否更新雅克比基本方法就涉及到了IMU的创博方针和器方差矩阵的窗哦sdf
+     */
     void midPointIntegration(double _dt, 
                             const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
                             const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1,
@@ -86,7 +100,7 @@ class IntegrationBase
                             Eigen::Vector3d &result_delta_p, Eigen::Quaterniond &result_delta_q, Eigen::Vector3d &result_delta_v,
                             Eigen::Vector3d &result_linearized_ba, Eigen::Vector3d &result_linearized_bg, bool update_jacobian)
     {
-        //ROS_INFO("midpoint integration");
+        // ROS_INFO("midpoint integration");
         // 注:以下计算PVQ都是每时刻世界坐标系下(第一帧IMU系)的量，加速度、角速度都是IMU系下的量
         // 前一时刻加速度
         Vector3d un_acc_0 = delta_q * (_acc_0 - linearized_ba);
@@ -168,7 +182,7 @@ class IntegrationBase
     }
 
     /**
-     * IMU中值积分传播
+     * IMU中值积分传播。同时维护更新预积分的Jacobian和Covariance,计算优化时必要的参数
      * 1、前一时刻状态计算当前时刻状态，PVQ，Ba，Bg
      * 2、计算当前时刻的误差Jacobian，误差协方差 todo
     */
@@ -185,7 +199,7 @@ class IntegrationBase
 
         /**
          * 中值积分
-         * 1、前一时刻状态计算当前时刻状态，PVQ，其中Ba，Bg保持不变
+         * 1、根据前一时刻状态 计算 当前时刻状态，PVQ；其中Ba，Bg保持不变
          * 2、计算当前时刻的误差Jacobian，误差协方差 todo
         */
         midPointIntegration(_dt, acc_0, gyr_0, _acc_1, _gyr_1, delta_p, delta_q, delta_v,

@@ -51,10 +51,20 @@ int FeatureManager::getFeatureCount()
     return cnt;
 }
 
+/* addFeatureCheckParallax
+对当前帧与之前帧进行视差比较，如果是当前帧变化很小，就会删去倒数第二帧，如果变化很大，就删去最旧的帧。并把这一帧作为新的关键帧
+这样也就保证了划窗内优化的,除了最后一帧可能不是关键帧外,其余的都是关键帧
+VINS里为了控制优化计算量，在实时情况下，只对当前帧之前某一部分帧进行优化，而不是全部历史帧。局部优化帧的数量就是窗口大小。
+为了维持窗口大小，需要去除旧的帧添加新的帧，也就是边缘化 Marginalization。到底是删去最旧的帧（MARGIN_OLD）还是删去刚
+刚进来窗口倒数第二帧(MARGIN_SECOND_NEW)
+如果大于最小像素,则返回true */
+
 /**
  * 添加特征点记录，并检查当前帧是否为关键帧
  * @param frame_count   当前帧在滑窗中的索引
- * @param image         当前帧特征（featureId，cameraId，feature）
+ * @param image         当前帧特征：feature_id，[camera_id (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx, vy (归一化相机平面移动速度)]
+ * @param td
+ * @return  true表示当前帧为关键帧
 */
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
@@ -66,12 +76,13 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     last_average_parallax = 0;
     new_feature_num = 0;
     long_track_num = 0;
-    // 遍历特征点
+    // 遍历当前帧的每个特征点
     for (auto &id_pts : image)
     {
         // 左目对应特征点
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
         assert(id_pts.second[0].first == 0);
+
         if(id_pts.second.size() == 2)
         {
             // 右目对应特征点
@@ -409,7 +420,7 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
             //cout << "point0 " << point0.transpose() << endl;
             //cout << "point1 " << point1.transpose() << endl;
 
-            // SVD计算三角化点
+            //! SVD计算三角化点
             triangulatePoint(leftPose, rightPose, point0, point1, point3d);
             // 相机点
             Eigen::Vector3d localPoint;
