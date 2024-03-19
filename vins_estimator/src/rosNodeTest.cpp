@@ -31,6 +31,7 @@ std::mutex m_buf;   // 操作缓存队列需要上锁
 
 /**
  * 订阅左图，缓存
+ * 获得左目的message
 */
 void img0_callback(const sensor_msgs::ImageConstPtr &img_msg)
 {
@@ -41,6 +42,7 @@ void img0_callback(const sensor_msgs::ImageConstPtr &img_msg)
 
 /**
  * 订阅右图，缓存
+ * 获得右目的message
 */
 void img1_callback(const sensor_msgs::ImageConstPtr &img_msg)
 {
@@ -50,7 +52,9 @@ void img1_callback(const sensor_msgs::ImageConstPtr &img_msg)
 }
 
 /**
- * ROS图像转换成CV格式
+ * ROS图像转换成CV格式 (从msg中获取图片)
+ * img_msg  当前图像msg的指针
+ * return   cv::Mat
 */
 cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg)
 {
@@ -87,11 +91,12 @@ void sync_process()
             std_msgs::Header header;
             double time = 0;
             m_buf.lock();
+            // 左右目缓存队列不空
             if (!img0_buf.empty() && !img1_buf.empty())
             {
                 double time0 = img0_buf.front()->header.stamp.toSec();
                 double time1 = img1_buf.front()->header.stamp.toSec();
-                // 双目相机左右图像时差不得超过0.003s
+                // 左右目图像时间戳差需 <= 0.003s
                 if(time0 < time1 - 0.003)
                 {
                     img0_buf.pop();
@@ -104,19 +109,23 @@ void sync_process()
                 }
                 else
                 {
-                    // 提取缓存队列中最早一帧图像，并从队列中删除
+                    // 提取缓存队列中最早的一帧 左右目图像，并从队列中删除
                     time = img0_buf.front()->header.stamp.toSec();
                     header = img0_buf.front()->header;
+
                     image0 = getImageFromMsg(img0_buf.front());
                     img0_buf.pop();
+
                     image1 = getImageFromMsg(img1_buf.front());
                     img1_buf.pop();
                 }
             }
             m_buf.unlock();
+            // 拿到图片，则传入 estimator
             if(!image0.empty())
                 estimator.inputImage(time, image0, image1);
         }
+        // 单目
         else
         {
             cv::Mat image;
@@ -127,6 +136,7 @@ void sync_process()
             {
                 time = img0_buf.front()->header.stamp.toSec();
                 header = img0_buf.front()->header;
+
                 image = getImageFromMsg(img0_buf.front());
                 img0_buf.pop();
             }
@@ -142,6 +152,7 @@ void sync_process()
 
 /**
  * 订阅IMU，直接交给estimator处理
+ * 获取IMU的msg信息，并将其输入到 estimator 的 accBuf 和 gyrBuf 中
 */
 void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
 {
@@ -154,30 +165,33 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
     double rz = imu_msg->angular_velocity.z;
     Vector3d acc(dx, dy, dz);
     Vector3d gyr(rx, ry, rz);
+    // 输入到 estimator 的 accBuf 和 gyrBuf 中，并进行IMU预积分 与 广播
     estimator.inputIMU(t, acc, gyr);
     return;
 }
 
 /**
  * 订阅一帧跟踪的特征点，包括3D坐标、像素坐标、速度，交给estimator处理
+ * 获取点云数据，之后填充到 featureFrame，并把 featureFrame 通过 inputFeature 输入到 estimator，且填充了 featureBuf
 */
 void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
 {
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> featureFrame;
+    // 遍历每个特征点i
     for (unsigned int i = 0; i < feature_msg->points.size(); i++)
     {
         int feature_id = feature_msg->channels[0].values[i];
         int camera_id = feature_msg->channels[1].values[i];
-        double x = feature_msg->points[i].x;
+        double x = feature_msg->points[i].x;    // 三维坐标
         double y = feature_msg->points[i].y;
         double z = feature_msg->points[i].z;
-        double p_u = feature_msg->channels[2].values[i];
+        double p_u = feature_msg->channels[2].values[i];    // 像素坐标
         double p_v = feature_msg->channels[3].values[i];
-        double velocity_x = feature_msg->channels[4].values[i];
+        double velocity_x = feature_msg->channels[4].values[i]; // 速度
         double velocity_y = feature_msg->channels[5].values[i];
         if(feature_msg->channels.size() > 5)
         {
-            double gx = feature_msg->channels[6].values[i];
+            double gx = feature_msg->channels[6].values[i]; // 重力？
             double gy = feature_msg->channels[7].values[i];
             double gz = feature_msg->channels[8].values[i];
             pts_gt[feature_id] = Eigen::Vector3d(gx, gy, gz);
@@ -195,6 +209,7 @@ void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
 
 /**
  * 订阅，重启节点
+ * 是否重启estimator，并重新设置参数
 */
 void restart_callback(const std_msgs::BoolConstPtr &restart_msg)
 {
@@ -208,7 +223,7 @@ void restart_callback(const std_msgs::BoolConstPtr &restart_msg)
 }
 
 /**
- * 订阅，双目，IMU开关
+ * 订阅，双目，是否使用IMU开关
 */
 void imu_switch_callback(const std_msgs::BoolConstPtr &switch_msg)
 {
@@ -262,7 +277,7 @@ int main(int argc, char **argv)
 
     // 读取YAML配置参数
     readParameters(config_file);
-    estimator.setParameter();
+    estimator.setParameter();   // 设置参数
 
 #ifdef EIGEN_DONT_PARALLELIZE
     ROS_DEBUG("EIGEN_DONT_PARALLELIZE");
@@ -272,6 +287,14 @@ int main(int argc, char **argv)
 
     // 注册vins_estimator节点，在次节点下发布话题
     registerPub(n);
+
+    /*
+    ros::Subscriber subscribe (const std::string &topic, uint32_t queue_size, void(*fp)(M), const TransportHints &transport_hints=TransportHints())
+    参数1：订阅话题的名称；
+    参数2：订阅队列的长度；（如果收到的消息都没来得及处理，那么新消息入队，旧消息就会出队）；
+    参数3：回调函数的指针，指向回调函数来处理接收到的消息！
+    参数4：似乎与延迟有关系，暂时不关心。（该成员函数有13重载）
+    */
 
     // 订阅IMU
     ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());
@@ -289,8 +312,11 @@ int main(int argc, char **argv)
     ros::Subscriber sub_cam_switch = n.subscribe("/vins_cam_switch", 100, cam_switch_callback);
 
     // 从两个图像队列中取出最早的一帧，并从队列删除，双目要求两帧时差不得超过0.003s
-    std::thread sync_thread{sync_process};
-    ros::spin();
+    std::thread sync_thread{sync_process};  // 创建sync_thread线程，指向sync_process，这里边处理了processMeasurements的线程
+    ros::spin();    // 用于触发topic, service的响应队列
+
+    // 如果你的程序写了相关的消息订阅函数，那么程序在执行过程中，除了主程序以外，ROS还会自动在后台按照你规定的格式，接受订阅的消息，但是所接到的消息并不是立刻就被处理，
+    // 而是必须要等到ros::spin()或ros::spinOnce()执行的时候才被调用，这就是消息回到函数的原理
 
     return 0;
 }

@@ -174,26 +174,26 @@ void Estimator::changeSensorType(int use_imu, int use_stereo)
  * 输入一帧图像
  * 1、featureTracker，提取当前帧特征点
  * 2、添加一帧特征点，processMeasurements处理
-*/
+ * @param t 当前帧时间戳
+ * @param _img  左目图像
+ * @param _img1 右目图像
+ */
 void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
 {
     inputImageCnt++;
-    // 特征点id，(x,y,z,pu,pv,vx,vy)
+    // featureFrame的value: feature_id，[camera_id, x, y, z (归一化相机平面坐标), pu, pv (像素坐标), vx, vy (归一化相机平面移动速度)]
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> featureFrame;
     TicToc featureTrackerTime;
 
     /**
-     * 跟踪一帧图像，提取当前帧特征点
-     * 1、用前一帧运动估计特征点在当前帧中的位置，如果特征点没有速度，就直接用前一帧该点位置
-     * 2、LK光流跟踪前一帧的特征点，正反向，删除跟丢的点；如果是双目，进行左右匹配，只删右目跟丢的特征点
-     * 3、对于前后帧用LK光流跟踪到的匹配特征点，计算基础矩阵，用极线约束进一步剔除outlier点（代码注释掉了）
-     * 4、如果特征点不够，剩余的用角点来凑；更新特征点跟踪次数
-     * 5、计算特征点归一化相机平面坐标，并计算相对与前一帧移动速度
-     * 6、保存当前帧特征点数据（归一化相机平面坐标，像素坐标，归一化相机平面移动速度）
-     * 7、展示，左图特征点用颜色区分跟踪次数（红色少，蓝色多），画个箭头指向前一帧特征点位置，如果是双目，右图画个绿色点
+     * trackImage() 跟踪当前帧图像，提取当前帧特征点
+     * 更新特征点跟踪次数；保存当前帧特征点数据（归一化相机平面坐标，像素坐标，相对于前一帧的归一化相机平面移动速度）
+     * 展示：画左图特征点（红色跟踪次数少，蓝色跟踪次数多），画箭头指向前一帧特征点位置；如果是双目，右图画个绿色点
     */
+    // 单目跟踪
     if(_img1.empty())
         featureFrame = featureTracker.trackImage(t, _img);
+    // 双目跟踪
     else
         featureFrame = featureTracker.trackImage(t, _img, _img1);
     //printf("featureTracker time: %f\n", featureTrackerTime.toc());
@@ -205,9 +205,9 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
         pubTrackImage(imgTrack, t);
     }
     
-    // 添加一帧特征点，处理
+    // 添加一帧特征点到featureBuf，处理一帧的特征点
     if(MULTIPLE_THREAD)  
-    {     
+    {   // 多线程
         if(inputImageCnt % 2 == 0)
         {
             mBuf.lock();
@@ -216,10 +216,11 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
         }
     }
     else
-    {
+    {   // 单线程
         mBuf.lock();
         featureBuf.push(make_pair(t, featureFrame));
         mBuf.unlock();
+
         TicToc processTime;
         processMeasurements();
         printf("process time: %f\n", processTime.toc());
@@ -228,7 +229,7 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
 }
 
 /**
- * 输入一帧IMU
+ * 输入新的一帧的IMU信息
  * 1、积分预测当前帧状态，latest_time，latest_Q，latest_P，latest_V，latest_acc_0，latest_gyr_0
  * 2、发布里程计
 */
@@ -243,10 +244,10 @@ void Estimator::inputIMU(double t, const Vector3d &linearAcceleration, const Vec
     if (solver_flag == NON_LINEAR)
     {
         mPropagate.lock();
-        // IMU预测状态，更新QPV
-        // latest_time，latest_Q，latest_P，latest_V，latest_acc_0，latest_gyr_0
+        // 使用上一时刻的姿态进行快速的IMU预积分，来预测当前帧的状态：latest_time，最新的旋转Q latest_Q、位置P latest_P、速度V latest_V、latest_acc_0、latest_gyr_0
+        // 这个信息根据processIMU的最新数据Ps[frame_count]、Rs[frame_count]、Vs[frame_count]、Bas[frame_count]、Bgs[frame_count]来进行预积分，从而保证信息能够正常发布。
         fastPredictIMU(t, linearAcceleration, angularVelocity);
-        // 发布里程计
+        // 广播发布里程计
         pubLatestOdometry(latest_P, latest_Q, latest_V, t);
         mPropagate.unlock();
     }
@@ -501,7 +502,7 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
  * 1、提取前一帧与当前帧的匹配点
  * 2、在线标定外参旋转
  *     利用两帧之间的Camera旋转和IMU积分旋转，构建最小二乘问题，SVD求解外参旋转
- *     1) Camera系，两帧匹配点计算本质矩阵E，分解得到四个解，根据三角化成功点比例确定最终正确解R、t，得到两帧之间的旋转R
+ *     1) Camera系，两帧匹配点计算本质矩阵E，分解得到四个解，根据三角化成功点比例确定最终正确解 R、t，得到两帧之间的旋转R
  *     2) IMU系，积分计算两帧之间的旋转
  *     3) 根据旋转构建最小二乘问题，SVD求解外参旋转
  * 3、系统初始化
@@ -685,6 +686,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         }
 
     }
+    // 系统已初始化完毕
     else
     {
         TicToc t_solve;
@@ -1827,12 +1829,12 @@ void Estimator::predictPtsInNextFrame()
     if(frame_count < 2)
         return;
     // predict next pose. Assume constant velocity motion
-    // 当前帧位姿、前一帧位姿Twi
+    // 当前帧位姿Twc、前一帧位姿Twl
     Eigen::Matrix4d curT, prevT, nextT;
     getPoseInWorldFrame(curT);
     getPoseInWorldFrame(frame_count - 1, prevT);
-    // 用前一帧位姿与当前帧位姿的变换，预测下一帧位姿
-    nextT = curT * (prevT.inverse() * curT);
+    // 用前一帧位姿与当前帧位姿的变换，预测下一帧位姿Twn
+    nextT = curT * (prevT.inverse() * curT);    // Twc * (Tlw * Twc = Tlc = Tcn) = Twn
     map<int, Eigen::Vector3d> predictPts;
 
     // 遍历特征点
@@ -1957,24 +1959,34 @@ void Estimator::outliersRejection(set<int> &removeIndex)
 }
 
 /**
- * IMU预测状态，更新QPV
+ * IMU预积分，预测当前帧的状态，更新旋转矩阵Q，位置P，速度V，即
  * latest_time，latest_Q，latest_P，latest_V，latest_acc_0，latest_gyr_0
+ * @param t 当前帧时间戳
+ * @param linear_acceleration   当前帧加速度
+ * @param angular_velocity  当前帧陀螺仪
 */
 void Estimator::fastPredictIMU(double t, Eigen::Vector3d linear_acceleration, Eigen::Vector3d angular_velocity)
 {
-    double dt = t - latest_time;
-    latest_time = t;
-    // 前一帧加速度（世界系）
+    double dt = t - latest_time;    // 与前一帧的时间差
+    latest_time = t;    // 更新 最新时间
+    // 前一帧的加速度、角速度（世界系）
     Eigen::Vector3d un_acc_0 = latest_Q * (latest_acc_0 - latest_Ba) - g;
     Eigen::Vector3d un_gyr = 0.5 * (latest_gyr_0 + angular_velocity) - latest_Bg;
-    // 更新旋转Q
+
+    // 更新旋转矩阵Q: 使用角速度更新
     latest_Q = latest_Q * Utility::deltaQ(un_gyr * dt);
+
+    // 使用加速度 和 更新后的旋转矩阵 更新预测的加速度
     Eigen::Vector3d un_acc_1 = latest_Q * (linear_acceleration - latest_Ba) - g;
+    // 计算预测的加速度: 将预测的加速度平均到前一帧和当前帧之间
     Eigen::Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
-    // 更新位置P
+
+    // 更新位置P: 使用时间差、速度和预测的加速度更新位置
     latest_P = latest_P + dt * latest_V + 0.5 * dt * dt * un_acc;
-    // 更新速度V
+    // 更新速度V: 使用预测的加速度更新速度
     latest_V = latest_V + dt * un_acc;
+
+    // 将当前帧的加速度、角速度 更新为 下一帧的前一帧的值
     latest_acc_0 = linear_acceleration;
     latest_gyr_0 = angular_velocity;
 }

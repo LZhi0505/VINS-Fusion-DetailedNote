@@ -311,7 +311,12 @@ bool FeatureManager::solvePoseByPnP(Eigen::Matrix3d &R, Eigen::Vector3d &P,
  * 3d-2d Pnp求解当前帧位姿
  * 1、世界坐标-像素坐标
  * 2、用前一帧位姿初始化当前帧位姿
-*/
+ * @param frameCnt
+ * @param Ps
+ * @param Rs
+ * @param tic
+ * @param ric
+ */
 void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vector3d tic[], Matrix3d ric[])
 {
 
