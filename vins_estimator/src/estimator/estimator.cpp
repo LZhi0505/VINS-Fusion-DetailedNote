@@ -103,9 +103,8 @@ void Estimator::clearState()
 void Estimator::setParameter()
 {
     mProcess.lock();
-    // 外参，body_T_cam
-    for (int i = 0; i < NUM_OF_CAM; i++)
-    {
+    // 从配置文件获取的左右目外参 设置到 ric,tic 中，body_T_cam
+    for (int i = 0; i < NUM_OF_CAM; i++) {
         tic[i] = TIC[i];
         ric[i] = RIC[i];
         cout << " exitrinsic cam " << i << endl  << ric[i] << endl << tic[i].transpose() << endl;
@@ -229,10 +228,13 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
 }
 
 /**
- * 输入新的一帧的IMU信息
+ * 输入新的一帧的IMU数据
  * 1、积分预测当前帧状态，latest_time，latest_Q，latest_P，latest_V，latest_acc_0，latest_gyr_0
  * 2、发布里程计
-*/
+ * @param t                     时间戳
+ * @param linearAcceleration    加速度
+ * @param angularVelocity       角速度
+ */
 void Estimator::inputIMU(double t, const Vector3d &linearAcceleration, const Vector3d &angularVelocity)
 {
     mBuf.lock();
@@ -244,7 +246,7 @@ void Estimator::inputIMU(double t, const Vector3d &linearAcceleration, const Vec
     if (solver_flag == NON_LINEAR)
     {
         mPropagate.lock();
-        // 使用上一时刻的姿态进行快速的IMU预积分，来预测当前帧的状态：latest_time，最新的旋转Q latest_Q、位置P latest_P、速度V latest_V、latest_acc_0、latest_gyr_0
+        // IMU预积分：使用上一时刻的姿态进行快速的 IMU预积分，来预测当前帧的状态：latest_time，最新的旋转Q latest_Q、位置P latest_P、速度V latest_V、latest_acc_0、latest_gyr_0
         // 这个信息根据processIMU的最新数据Ps[frame_count]、Rs[frame_count]、Vs[frame_count]、Bas[frame_count]、Bgs[frame_count]来进行预积分，从而保证信息能够正常发布。
         fastPredictIMU(t, linearAcceleration, angularVelocity);
         // 广播发布里程计
@@ -254,14 +256,18 @@ void Estimator::inputIMU(double t, const Vector3d &linearAcceleration, const Vec
 }
 
 /**
- * 输入一帧特征点，processMeasurements处理
-*/
+ * 输入一帧特征点，processMeasurements 进行处理
+ * @param t             时间戳
+ * @param featureFrame  帧的特征数据
+ */
 void Estimator::inputFeature(double t, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &featureFrame)
 {
     mBuf.lock();
+    // 存入帧特征缓存队列中
     featureBuf.push(make_pair(t, featureFrame));
     mBuf.unlock();
 
+    // 单线程，则处理当前帧
     if(!MULTIPLE_THREAD)
         processMeasurements();
 }
@@ -318,26 +324,27 @@ bool Estimator::IMUAvailable(double t)
 }
 
 /**
- * 处理一帧特征点
+ * 处理当前帧的特征点
 */
 void Estimator::processMeasurements()
 {
-    while (1)
-    {
+    while (1) {
         //printf("process measurments\n");
         pair< double, map< int, vector<pair<int, Eigen::Matrix<double, 7, 1>>> > > feature;
         vector<pair<double, Eigen::Vector3d>> accVector, gyrVector; // 时间戳，加速度计/陀螺仪数据
-        if(!featureBuf.empty())
-        {
-            // 当前图像帧特征: 时间戳, {feature_id，[camera_id (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx, vy (归一化相机平面移动速度)]}
+        // 特征队列中有东西
+        if(!featureBuf.empty()) {
+            // 当前帧特征数据: 时间戳, {feature_id，[camera_id (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx, vy (归一化相机平面移动速度)]}
             feature = featureBuf.front();
             curTime = feature.first + td;
 
+            // IMU模式 但 当前帧数据不可用，则直接返回，丢弃
             while(1) {
-                // 判断输入时刻的IMU数据是否可用
+                // 非IMU模式 或 输入时刻的IMU数据可用，则跳过，进行后面的
                 if ((!USE_IMU  || IMUAvailable(feature.first + td)))
                     break;
-                else {  // 可用
+                // IMU模式 且 IMU数据不可用，则直接返回，认为处理完毕
+                else {
                     printf("wait for imu ... \n");
                     if (! MULTIPLE_THREAD)
                         return;
@@ -348,15 +355,15 @@ void Estimator::processMeasurements()
 
             mBuf.lock();
 
+            //! IMU模式，获取 前一帧与当前帧图像之间的IMU数据：时间戳，加速度计/陀螺仪数据
             if(USE_IMU)
-                // 获取 前一帧与当前帧图像之间的IMU数据：时间戳，加速度计/陀螺仪数据
                 getIMUInterval(prevTime, curTime, accVector, gyrVector);
 
             featureBuf.pop();
             mBuf.unlock();
 
-            if(USE_IMU)
-            {
+            //! IMU模式，
+            if(USE_IMU) {
                 // 如果未初始化，则进行 第一帧的IMU姿态初始化
                 if(!initFirstPoseFlag) {
                     // 用初始时刻加速度方向对齐重力加速度方向，得到一个旋转矩阵，使得初始IMU的z轴指向重力加速度方向
@@ -402,7 +409,8 @@ void Estimator::processMeasurements()
             mProcess.unlock();
         }
 
-        if (! MULTIPLE_THREAD)
+        // 单线程直接终止循环
+        if (!MULTIPLE_THREAD)
             break;
 
         std::chrono::milliseconds dura(2);

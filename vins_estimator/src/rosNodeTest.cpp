@@ -83,32 +83,26 @@ cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg)
 */
 void sync_process()
 {
-    while(1)
-    {
-        if(STEREO)
-        {
+    while(1) {
+        if(STEREO) {
             cv::Mat image0, image1;
             std_msgs::Header header;
             double time = 0;
             m_buf.lock();
             // 左右目缓存队列不空
-            if (!img0_buf.empty() && !img1_buf.empty())
-            {
+            if (!img0_buf.empty() && !img1_buf.empty()) {
                 double time0 = img0_buf.front()->header.stamp.toSec();
                 double time1 = img1_buf.front()->header.stamp.toSec();
                 // 左右目图像时间戳差需 <= 0.003s
-                if(time0 < time1 - 0.003)
-                {
+                if(time0 < time1 - 0.003) {
                     img0_buf.pop();
                     printf("throw img0\n");
                 }
-                else if(time0 > time1 + 0.003)
-                {
+                else if(time0 > time1 + 0.003) {
                     img1_buf.pop();
                     printf("throw img1\n");
                 }
-                else
-                {
+                else {
                     // 提取缓存队列中最早的一帧 左右目图像，并从队列中删除
                     time = img0_buf.front()->header.stamp.toSec();
                     header = img0_buf.front()->header;
@@ -126,8 +120,7 @@ void sync_process()
                 estimator.inputImage(time, image0, image1);
         }
         // 单目
-        else
-        {
+        else {
             cv::Mat image;
             std_msgs::Header header;
             double time = 0;
@@ -151,8 +144,7 @@ void sync_process()
 }
 
 /**
- * 订阅IMU，直接交给estimator处理
- * 获取IMU的msg信息，并将其输入到 estimator 的 accBuf 和 gyrBuf 中
+ * 获取IMU的加速度计和陀螺仪数据，并将其输入到 estimator 的 accBuf 和 gyrBuf 中进行 IMU预积分，获取当前帧状态
 */
 void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
 {
@@ -171,11 +163,11 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
 }
 
 /**
- * 订阅一帧跟踪的特征点，包括3D坐标、像素坐标、速度，交给estimator处理
- * 获取点云数据，之后填充到 featureFrame，并把 featureFrame 通过 inputFeature 输入到 estimator，且填充了 featureBuf
+ * 订阅一帧跟踪的特征点，包括3D坐标、像素坐标、速度，填充到 featureFrame，并输入到 estimator 的 featureBuf
 */
 void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
 {
+    // feature_id, (camera_id, x, y, z, p_u, p_v, velocity_x, velocity_y)
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> featureFrame;
     // 遍历每个特征点i
     for (unsigned int i = 0; i < feature_msg->points.size(); i++)
@@ -203,7 +195,9 @@ void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
         featureFrame[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
     }
     double t = feature_msg->header.stamp.toSec();
+
     estimator.inputFeature(t, featureFrame);
+
     return;
 }
 
@@ -285,7 +279,7 @@ int main(int argc, char **argv)
 
     ROS_WARN("waiting for image and imu...");
 
-    // 注册vins_estimator节点，在次节点下发布话题
+    // 注册vins_estimator节点，在此节点下发布话题
     registerPub(n);
 
     /*

@@ -71,7 +71,7 @@ T readParam(ros::NodeHandle &n, std::string name)
 void readParameters(std::string config_file)
 {
     FILE *fh = fopen(config_file.c_str(),"r");
-    if(fh == NULL){
+    if(fh == NULL) {
         ROS_WARN("config_file dosen't exist; wrong config_file path");
         ROS_BREAK();
         return;          
@@ -79,8 +79,7 @@ void readParameters(std::string config_file)
     fclose(fh);
 
     cv::FileStorage fsSettings(config_file, cv::FileStorage::READ);
-    if(!fsSettings.isOpened())
-    {
+    if(!fsSettings.isOpened()) {
         std::cerr << "ERROR: Wrong path to settings" << std::endl;
     }
 
@@ -88,11 +87,11 @@ void readParameters(std::string config_file)
     fsSettings["image1_topic"] >> IMAGE1_TOPIC;
     MAX_CNT = fsSettings["max_cnt"];
     MIN_DIST = fsSettings["min_dist"];
-    F_THRESHOLD = fsSettings["F_threshold"];
+    F_THRESHOLD = fsSettings["F_threshold"];    // ransac threshold (pixel)
     SHOW_TRACK = fsSettings["show_track"];
-    FLOW_BACK = fsSettings["flow_back"];
+    FLOW_BACK = fsSettings["flow_back"];    // 正反向光流跟踪开关
 
-    MULTIPLE_THREAD = fsSettings["multiple_thread"];
+    MULTIPLE_THREAD = fsSettings["multiple_thread"];    // 使用udoxiancheng
 
     USE_IMU = fsSettings["imu"];
     printf("USE_IMU: %d\n", USE_IMU);
@@ -118,18 +117,16 @@ void readParameters(std::string config_file)
     std::ofstream fout(VINS_RESULT_PATH, std::ios::out);
     fout.close();
 
-    ESTIMATE_EXTRINSIC = fsSettings["estimate_extrinsic"];
-    if (ESTIMATE_EXTRINSIC == 2)
-    {
+    // 先获取左目与IMU的外参 到 RIC TIC
+    ESTIMATE_EXTRINSIC = fsSettings["estimate_extrinsic"];  // 0: 有确定的Tbc外参；1有初始估计的外参，之后还要优化；2没有外参，需要标定，Ric初始化为单位阵，tic初始化为零向量
+    if (ESTIMATE_EXTRINSIC == 2) {
         ROS_WARN("have no prior about extrinsic param, calibrate extrinsic param");
         RIC.push_back(Eigen::Matrix3d::Identity());
         TIC.push_back(Eigen::Vector3d::Zero());
         EX_CALIB_RESULT_PATH = OUTPUT_FOLDER + "/extrinsic_parameter.csv";
     }
-    else 
-    {
-        if ( ESTIMATE_EXTRINSIC == 1)
-        {
+    else  {
+        if ( ESTIMATE_EXTRINSIC == 1) {
             ROS_WARN(" Optimize extrinsic param around initial guess!");
             EX_CALIB_RESULT_PATH = OUTPUT_FOLDER + "/extrinsic_parameter.csv";
         }
@@ -147,12 +144,11 @@ void readParameters(std::string config_file)
     NUM_OF_CAM = fsSettings["num_of_cam"];
     printf("camera number %d\n", NUM_OF_CAM);
 
-    if(NUM_OF_CAM != 1 && NUM_OF_CAM != 2)
-    {
+    // 相机个数必须为1或2
+    if(NUM_OF_CAM != 1 && NUM_OF_CAM != 2) {
         printf("num_of_cam should be 1 or 2\n");
         assert(0);
     }
-
 
     int pn = config_file.find_last_of('/');
     std::string configPath = config_file.substr(0, pn);
@@ -160,17 +156,19 @@ void readParameters(std::string config_file)
     std::string cam0Calib;
     fsSettings["cam0_calib"] >> cam0Calib;
     std::string cam0Path = configPath + "/" + cam0Calib;
+    // 先存入左目的内参文件路径
     CAM_NAMES.push_back(cam0Path);
 
-    if(NUM_OF_CAM == 2)
-    {
+    // 再存入右目的内参文件路径
+    if(NUM_OF_CAM == 2) {
         STEREO = 1;
         std::string cam1Calib;
         fsSettings["cam1_calib"] >> cam1Calib;
         std::string cam1Path = configPath + "/" + cam1Calib; 
         //printf("%s cam1 path\n", cam1Path.c_str() );
         CAM_NAMES.push_back(cam1Path);
-        
+
+        // 再获取右目与IMU的外参 到 RIC TIC
         cv::Mat cv_T;
         fsSettings["body_T_cam1"] >> cv_T;
         Eigen::Matrix4d T;
@@ -183,8 +181,8 @@ void readParameters(std::string config_file)
     BIAS_ACC_THRESHOLD = 0.1;
     BIAS_GYR_THRESHOLD = 0.1;
 
-    TD = fsSettings["td"];
-    ESTIMATE_TD = fsSettings["estimate_td"];
+    TD = fsSettings["td"];  // 初始时间偏移(s)
+    ESTIMATE_TD = fsSettings["estimate_td"];    // 是否在线获取相机与IMU的时间漂移，1表示两个传感器未同步，0表示两个传感器已同步
     if (ESTIMATE_TD)
         ROS_INFO_STREAM("Unsynchronized sensors, online estimate time offset, initial td: " << TD);
     else
