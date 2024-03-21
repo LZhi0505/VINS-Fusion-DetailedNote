@@ -597,23 +597,25 @@ void Estimator::processImage(
   imageframe.pre_integration =
       tmp_pre_integration; // 当前帧预积分（前一帧与当前帧之间的IMU预积分）
 
-  all_image_frame.insert(
-      make_pair(header, imageframe)); // 把输入图像插入到 all_image_frame 中
+  // 把输入图像插入到 all_image_frame 中
+  all_image_frame.insert(make_pair(header, imageframe));
   // 重置预积分器
   tmp_pre_integration =
       new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
 
-  // 2. 进行camera到IMU(body)外参的标定。如果成功则把ESTIMATE_EXTRINSIC置1,
-  // 输出ric和RIC
-  if (ESTIMATE_EXTRINSIC ==
-      2) { // 0:
-           // 有确定的Tbc外参；1有初始估计的外参，之后还要优化；2没有外参，需要标定，Ric初始化为单位阵，tic初始化为零向量
+  // 2.
+  // 进行camera到IMU(body)外参的标定。如果成功则把ESTIMATE_EXTRINSIC置1,输出ric和RIC
+  // 2表示没有外参，需要标定，Ric初始化为单位阵，tic初始化为零向量。0:
+  // 有确定的Tbc外参；1: 有初始估计的外参，之后还要优化；
+  if (ESTIMATE_EXTRINSIC == 2) {
     ROS_INFO("calibrating extrinsic param, rotation movement is needed");
     if (frame_count != 0) {
-      // 提取 前一帧与当前帧的匹配点
+      // 找到frame_count - 1帧和frame_count帧的匹配特征点对
       vector<pair<Vector3d, Vector3d>> corres =
           f_manager.getCorresponding(frame_count - 1, frame_count);
-      Matrix3d calib_ric; // 存储标定的外参（旋转）
+
+      // 在线标定一个imu_T_cam外参作为初始值
+      Matrix3d calib_ric;
       /**
        * 当外参完全不知道的时候，可以在线对其进行初步估计,然后在后续优化时，会在optimize函数中再次优化
        * 利用两帧之间的Camera旋转和IMU积分旋转，构建最小二乘问题，SVD求解外参旋转
@@ -627,19 +629,21 @@ void Estimator::processImage(
         ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
         ric[0] = calib_ric;
         RIC[0] = calib_ric;
+        // 然后标记变为：提供外参初始值，但需优化
         ESTIMATE_EXTRINSIC = 1;
       }
     }
   }
 
-  // 系统未初始化，则进行初始化
+  // 3. 系统未初始化，则进行初始化。有三种模式：单目+IMU、双目+IMU、双目
   if (solver_flag == INITIAL) {
-    // 单目+IMU系统初始化
+    // 3.1 单目+IMU初始化
     if (!STEREO && USE_IMU) {
-      // 要求滑窗满，个数=10
+      // 要求滑窗满，个数=10，可能是因为相比较双目，单目的尺度不确定性，需要多帧及特征点恢复
+      // frame_count此时还没有更新，所以当前帧的ID是frame_count+1，也就是说现在一共有WINDOW_SIZE+1帧
       if (frame_count == WINDOW_SIZE) {
         bool result = false;
-        // 如果上次初始化没有成功，要求间隔0.1s
+        // 如果上次初始化没有成功，要求间隔0.1s，才会进行新的初始化
         if (ESTIMATE_EXTRINSIC != 2 && (header - initial_timestamp) > 0.1) {
           /**
            * todo
@@ -661,7 +665,7 @@ void Estimator::processImage(
           result = initialStructure();
           initial_timestamp = header;
         }
-        // 如果初始化成功
+        // 如果初始化成功，就执行后端非线性优化
         if (result) {
           // 先进行一次滑动窗口的Ceres非线性优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
           // 得到当前帧与第一帧的位姿
@@ -678,14 +682,15 @@ void Estimator::processImage(
       }
     }
 
-    // 双目+IMU系统初始化
+    // 3.2 双目+IMU初始化
     if (STEREO && USE_IMU) {
-      // 有了深度，当下一帧照片来到以后就可以利用pnp求解位姿了
+      // PnP求解当前帧的位姿：w_T_imu
       f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
-      // 双目三角化，结果放入 feature 的 estimated_depth 中
+      // 双目三角化，恢复所有帧的特征点深度，结果放入 feature 的 estimated_depth
+      // 中
       f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
 
-      // 滑动窗口满帧
+      // 如果滑动窗口第一次满了
       if (frame_count == WINDOW_SIZE) {
         map<double, ImageFrame>::iterator frame_it;
         int i = 0;
@@ -696,14 +701,14 @@ void Estimator::processImage(
           i++;
         }
 
-        // 零偏初始化，求解 陀螺仪的零偏
+        // // 陀螺仪零偏校正，并根据更新后的bg进行IMU积分更新
         solveGyroscopeBias(all_image_frame, Bgs);
-        // 之前预积分得到的结果进行更新
-        // 预积分的好处就在于你得到新的Bgs，不需要又重新再积分一遍，可以通过Bgs对位姿，速度的一阶导数，进行线性近似，得到新的Bgs求解出IMU的最终结果
+        // 依据新的IMU的加速度和角速度偏置值，重新IMU预积分（预积分的好处在于当得到新的Bgs，不需要重新再积分一遍，可以通过Bgs对位姿，速度的一阶导数，进行线性近似，得到新的Bgs求解出IMU的最终结果）
         for (int i = 0; i <= WINDOW_SIZE; i++) {
           pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
         }
 
+        // 初始化成功了，就执行后端非线性优化
         // 滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
         optimization();
         // 用优化后的当前帧位姿更新IMU积分的基础位姿，用于展示IMU轨迹
@@ -716,15 +721,14 @@ void Estimator::processImage(
     }
 
     // stereo only initilization
-    // 双目初始化
+    // 3.3 双目初始化
     if (STEREO && !USE_IMU) {
-      // 有了深度，当下一帧照片来到以后就可以利用pnp求解位姿了
       f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
-      // 双目三角化, 结果放入了 feature 的 estimated_depth 中
       f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
 
-      optimization();
+      optimization(); // 优化
 
+      // 如果滑动窗口满了，就执行后端的非线性优化
       if (frame_count == WINDOW_SIZE) {
         // 滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
         optimization();
@@ -737,8 +741,11 @@ void Estimator::processImage(
       }
     }
 
+    // 如果滑动窗口还没有满就添加到滑动窗口中
     if (frame_count < WINDOW_SIZE) {
       frame_count++;
+      // 注意，这里frame_count已经是下一帧的索引了，这里就是把当前帧估计的位姿
+      // 当作 下一帧的初始值
       int prev_frame = frame_count - 1;
       Ps[frame_count] = Ps[prev_frame];
       Vs[frame_count] = Vs[prev_frame];
@@ -748,12 +755,15 @@ void Estimator::processImage(
     }
 
   }
-  // 系统已初始化完毕
+  // 4. 如果完成了初始化，就进行后端优化
+  // 在完成初始化后就只进行后端非线性优化了，还是需要将滑窗中的特征点尽可能多地恢复出对应的3D点，获取多帧之间更多的约束，
+  // 进而得到更多的优化观测量, 使得优化结果更加鲁棒
   else {
     TicToc t_solve;
-    // 3d-2d Pnp求解当前帧位姿
-    if (!USE_IMU)
+    // 纯视觉，3d-2d PnP求解当前帧位姿
+    if (!USE_IMU) {
       f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
+    }
     // 三角化当前帧特征点
     f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
     // 滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
