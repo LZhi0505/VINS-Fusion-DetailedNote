@@ -23,7 +23,7 @@ do
     do
         if [[ "$value" == "$extension" ]];then
           echo "clang-format $src_file format $extension"
-          clang-format -style=LLVM -i "$src_file"
+          clang-format --assume-filename=./clang-format -i "$src_file"
         fi
     done
 done
