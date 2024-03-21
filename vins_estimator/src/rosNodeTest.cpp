@@ -34,8 +34,8 @@ queue<sensor_msgs::ImageConstPtr> img1_buf; // 队列，存储接受到的img1�
 std::mutex m_buf;                           // 用于更新buf时的锁
 
 /**
- * 订阅左图，缓存
- * 获得左目的message
+ * @brief 相机0的回调函数，保存相机0的msg
+ * @param img_msg
  */
 void img0_callback(const sensor_msgs::ImageConstPtr &img_msg) {
   m_buf.lock();
@@ -44,8 +44,8 @@ void img0_callback(const sensor_msgs::ImageConstPtr &img_msg) {
 }
 
 /**
- * 订阅右图，缓存
- * 获得右目的message
+ * @brief 相机1的回调函数，保存相机1的msg
+ * @param img_msg
  */
 void img1_callback(const sensor_msgs::ImageConstPtr &img_msg) {
   m_buf.lock();
@@ -55,11 +55,13 @@ void img1_callback(const sensor_msgs::ImageConstPtr &img_msg) {
 
 /**
  * ROS图像转换成CV格式 (从msg中获取图片)
- * img_msg  当前图像msg的指针
- * return   cv::Mat
+ * @param img_msg  当前图像msg的指针
+ * return   cv::Mat格式的图片
  */
 cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg) {
   cv_bridge::CvImageConstPtr ptr;
+
+  // 灰度图片需要额外处理
   if (img_msg->encoding == "8UC1") {
     sensor_msgs::Image img;
     img.header = img_msg->header;
@@ -70,7 +72,9 @@ cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg) {
     img.data = img_msg->data;
     img.encoding = "mono8";
     ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::MONO8);
-  } else
+  }
+  // 彩色图片可以直接转换
+  else
     ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
 
   cv::Mat img = ptr->image.clone();
@@ -78,7 +82,7 @@ cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg) {
 }
 
 /**
- * 从两个图像队列中取出最早的一帧，并从队列删除，双目要求两帧时差不得超过0.003s
+ * 对相机话题msg进行时间同步，时间同步的方式就是两图片时间戳大于0.003s就丢弃里面最早的图片，直到两图片时间戳同步
  */
 void sync_process() {
   while (1) {
@@ -87,19 +91,24 @@ void sync_process() {
       std_msgs::Header header;
       double time = 0;
       m_buf.lock();
-      // 左右目缓存队列不空
+
+      // 如果两个img buf里面都有未处理的msg
       if (!img0_buf.empty() && !img1_buf.empty()) {
         double time0 = img0_buf.front()->header.stamp.toSec();
         double time1 = img1_buf.front()->header.stamp.toSec();
-        // 左右目图像时间戳差需 <= 0.003s
+
+        // 当双目图片的时间戳大于0.003，则丢弃里面最早的图片msg，直到两个图片时间戳小于0.003
+        // 不了解这里不同步后只丢弃一张图片，难道还指望未被丢弃的这张图片会和下一帧图片会时间戳对齐？
         if (time0 < time1 - 0.003) {
           img0_buf.pop();
           printf("throw img0\n");
         } else if (time0 > time1 + 0.003) {
           img1_buf.pop();
           printf("throw img1\n");
-        } else {
-          // 提取缓存队列中最早的一帧 左右目图像，并从队列中删除
+        }
+        // 时间戳小于0.003则认为没有时间差，取出缓存队列中最早的一帧
+        // 左右目图像，并从队列中删除
+        else {
           time = img0_buf.front()->header.stamp.toSec();
           header = img0_buf.front()->header;
 
@@ -111,7 +120,7 @@ void sync_process() {
         }
       }
       m_buf.unlock();
-      // 拿到图片，则传入 estimator
+      // 将取出的图片msg 传入 estimator 中
       if (!image0.empty())
         estimator.inputImage(time, image0, image1);
     }
@@ -121,6 +130,8 @@ void sync_process() {
       std_msgs::Header header;
       double time = 0;
       m_buf.lock();
+
+      // 单目不考虑时间戳同步问题
       if (!img0_buf.empty()) {
         time = img0_buf.front()->header.stamp.toSec();
         header = img0_buf.front()->header;
@@ -129,6 +140,8 @@ void sync_process() {
         img0_buf.pop();
       }
       m_buf.unlock();
+
+      // 直接存入estimator中
       if (!image.empty())
         estimator.inputImage(time, image);
     }
