@@ -23,19 +23,20 @@ using namespace std;
 
 const double FOCAL_LENGTH = 460.0; // 焦距
 const int WINDOW_SIZE = 10;        // 滑动窗口大小
-const int NUM_OF_F = 1000;
-//#define UNIT_SPHERE_ERROR
+const int NUM_OF_F = 1000;         // 滑窗中feature数量上限
+
+//#define UNIT_SPHERE_ERROR //在单位球面（而非成像平面）上计算重投影误差，详见论文；作者关闭了这个宏
 
 extern double INIT_DEPTH;
 extern double MIN_PARALLAX;
-extern int ESTIMATE_EXTRINSIC;
+extern int ESTIMATE_EXTRINSIC; //是否在线估计外参
 
 extern double ACC_N, ACC_W;
 extern double GYR_N, GYR_W;
 
-extern std::vector<Eigen::Matrix3d> RIC; // 从相机系到body系的转换
-extern std::vector<Eigen::Vector3d> TIC;
-extern Eigen::Vector3d G;
+extern std::vector<Eigen::Matrix3d> RIC; // 外参旋转
+extern std::vector<Eigen::Vector3d> TIC; // 外参平移
+extern Eigen::Vector3d G;                //重力常量（3*1矢量）
 
 extern double BIAS_ACC_THRESHOLD;
 extern double BIAS_GYR_THRESHOLD;
@@ -46,7 +47,7 @@ extern std::string VINS_RESULT_PATH;
 extern std::string OUTPUT_FOLDER;
 extern std::string IMU_TOPIC;
 extern double TD;
-extern int ESTIMATE_TD;
+extern int ESTIMATE_TD; //是否在线估计这个时延
 extern int ROLLING_SHUTTER;
 extern int ROW, COL;
 extern int NUM_OF_CAM;
@@ -59,19 +60,15 @@ extern map<int, Eigen::Vector3d> pts_gt;
 extern std::string IMAGE0_TOPIC, IMAGE1_TOPIC;
 extern std::string FISHEYE_MASK;
 extern std::vector<std::string> CAM_NAMES;
-extern int MAX_CNT;
-extern int MIN_DIST;
-extern double F_THRESHOLD;
-extern int SHOW_TRACK;
-extern int FLOW_BACK;
+extern int MAX_CNT;        //允许最多追踪多少个特征点，通常是150或200
+extern int MIN_DIST;       //控制特征点密度的像素距离参数，使特征尽可能均匀分布
+extern double F_THRESHOLD; //用基础矩阵剔除outlier时的阈值（实际未启用）
+extern int SHOW_TRACK;     //是否在独立opencv窗口中显示图像，用于debug
+extern int FLOW_BACK;      //是否启用反向追踪检验，通常是启用的
 
 void readParameters(std::string config_file);
 
-enum SIZE_PARAMETERIZATION {
-  SIZE_POSE = 7,
-  SIZE_SPEEDBIAS = 9,
-  SIZE_FEATURE = 1
-};
+enum SIZE_PARAMETERIZATION { SIZE_POSE = 7, SIZE_SPEEDBIAS = 9, SIZE_FEATURE = 1 };
 
 enum StateOrder { O_P = 0, O_R = 3, O_V = 6, O_BA = 9, O_BG = 12 };
 

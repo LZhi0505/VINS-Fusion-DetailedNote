@@ -83,10 +83,10 @@ void readParameters(std::string config_file) {
         std::cerr << "ERROR: Wrong path to settings" << std::endl;
     }
 
-    // FileStorage读取yaml文件的两种方法
-    fsSettings["image0_topic"] >> IMAGE0_TOPIC; // 字符串类型不支持使用=读取
-    fsSettings["image1_topic"] >> IMAGE1_TOPIC;
-    MAX_CNT = fsSettings["max_cnt"]; // 数值类型可以使用=也可以使用>>
+    // FileStorage读取yaml文件的两种方法 (字符串类型不支持使用=读取)
+    fsSettings["image0_topic"] >> IMAGE0_TOPIC; // "/cam0/image_raw"
+    fsSettings["image1_topic"] >> IMAGE1_TOPIC; // "/cam1/image_raw"
+    MAX_CNT = fsSettings["max_cnt"];            // 数值类型可以使用=也可以使用>>
     MIN_DIST = fsSettings["min_dist"];
     F_THRESHOLD = fsSettings["F_threshold"]; // ransac threshold (pixel)
     SHOW_TRACK = fsSettings["show_track"];
@@ -99,7 +99,7 @@ void readParameters(std::string config_file) {
 
     // 如果使用imu，还需要读取imu的参数
     if (USE_IMU) {
-        fsSettings["imu_topic"] >> IMU_TOPIC;
+        fsSettings["imu_topic"] >> IMU_TOPIC; // "/imu0"
         printf("IMU_TOPIC: %s\n", IMU_TOPIC.c_str());
         ACC_N = fsSettings["acc_n"];
         ACC_W = fsSettings["acc_w"];

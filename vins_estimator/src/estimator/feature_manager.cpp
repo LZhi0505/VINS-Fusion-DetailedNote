@@ -18,7 +18,7 @@ FeatureManager::FeatureManager(Matrix3d _Rs[]) : Rs(_Rs) {
 }
 
 /**
- * @brief 设置ric矩阵
+ * 设置ric矩阵
  * @param _ric ric矩阵的设置值
  */
 void FeatureManager::setRic(Matrix3d _ric[]) {
@@ -27,6 +27,9 @@ void FeatureManager::setRic(Matrix3d _ric[]) {
     }
 }
 
+/**
+ * 清空 存放之前添加的全部帧的特征点列表
+ */
 void FeatureManager::clearState() { feature.clear(); }
 
 /**

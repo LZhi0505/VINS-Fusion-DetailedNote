@@ -441,11 +441,15 @@ void FeatureTracker::rejectWithF() {
 
 /**
  * 读取内参构建camera
+ * @param calib_file 左右目相机的内参文件路径
  */
 void FeatureTracker::readIntrinsicParameter(const vector<string> &calib_file) {
+
     for (size_t i = 0; i < calib_file.size(); i++) {
         ROS_INFO("reading paramerter of camera %s", calib_file[i].c_str());
+
         camodocal::CameraPtr camera = CameraFactory::instance()->generateCameraFromYamlFile(calib_file[i]);
+
         m_camera.push_back(camera);
     }
     if (calib_file.size() == 2)

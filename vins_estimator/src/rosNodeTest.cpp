@@ -39,7 +39,9 @@ std::mutex m_buf;                           // 用于更新buf时的锁
  */
 void img0_callback(const sensor_msgs::ImageConstPtr &img_msg) {
     m_buf.lock();
+
     img0_buf.push(img_msg);
+
     m_buf.unlock();
 }
 
@@ -49,7 +51,9 @@ void img0_callback(const sensor_msgs::ImageConstPtr &img_msg) {
  */
 void img1_callback(const sensor_msgs::ImageConstPtr &img_msg) {
     m_buf.lock();
+
     img1_buf.push(img_msg);
+
     m_buf.unlock();
 }
 
@@ -82,7 +86,7 @@ cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg) {
 }
 
 /**
- * 对相机话题msg进行时间同步，时间同步的方式就是两图片时间戳大于0.003s就丢弃里面最早的图片，直到两图片时间戳同步
+ * 获取时间同步(时间戳差值<0.003s)后的 左右目照片。传入到estimator中，调用inputImage进行处理
  */
 void sync_process() {
     while (1) {
@@ -120,7 +124,8 @@ void sync_process() {
                 }
             }
             m_buf.unlock();
-            // 将取出的图片msg 传入 estimator 中
+
+            // 将取出的cv格式图片 传入 estimator 中
             if (!image0.empty())
                 estimator.inputImage(time, image0, image1);
         }
@@ -141,7 +146,7 @@ void sync_process() {
             }
             m_buf.unlock();
 
-            // 直接存入estimator中
+            // 传入入estimator中
             if (!image.empty())
                 estimator.inputImage(time, image);
         }
@@ -152,8 +157,7 @@ void sync_process() {
 }
 
 /**
- * 获取IMU的加速度计和陀螺仪数据，并将其输入到 estimator 的 accBuf 和 gyrBuf
- * 中进行 IMU预积分，获取当前帧状态
+ * 获取新一时刻的IMU数据，并输入到 estimator 的 accBuf 和 gyrBuf中，进行 IMU预积分，获取当前帧状态
  */
 void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg) {
     double t = imu_msg->header.stamp.toSec();
@@ -165,14 +169,17 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg) {
     double rz = imu_msg->angular_velocity.z;
     Vector3d acc(dx, dy, dz);
     Vector3d gyr(rx, ry, rz);
+
     // 输入到 estimator 的 accBuf 和 gyrBuf 中，并进行IMU预积分 与 广播
     estimator.inputIMU(t, acc, gyr);
+
     return;
 }
 
 /**
- * 订阅一帧跟踪的特征点，包括3D坐标、像素坐标、速度，填充到
- * featureFrame，并输入到 estimator 的 featureBuf
+ * 从接收到的 特征点的点云信息，提取其featureID、cameraID、3D坐标、像素坐标、速度。输入到 estimator 的 featureBuf
+ * 但在VINS-Fusion中没有发布该节点，该函数没有用到
+ * @param feature_msg 特征点话题msg
  */
 void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg) {
     // feature_id, (camera_id, x, y, z, p_u, p_v, velocity_x, velocity_y)
@@ -281,34 +288,30 @@ int main(int argc, char **argv) {
     registerPub(n);
 
     /*
-    ros::Subscriber subscribe (const std::string &topic, uint32_t queue_size,
-    void(*fp)(M), const TransportHints &transport_hints=TransportHints())
+    ros::Subscriber subscribe (const std::string &topic, uint32_t queue_size, void(*fp)(M), const TransportHints &transport_hints=TransportHints())
     参数1：订阅话题的名称；
     参数2：订阅队列的长度；（如果收到的消息都没来得及处理，那么新消息入队，旧消息就会出队）；
     参数3：回调函数的指针，指向回调函数来处理接收到的消息！
     参数4：似乎与延迟有关系，暂时不关心。（该成员函数有13重载）
     */
 
+    // 如果程序写了相关的消息订阅函数，那么程序在执行过程中，除了主程序以外，ROS还会自动在后台按照你规定的格式，接受订阅的消息，但是所接到的消息并不是立刻就被处理，
+    // 而是必须要等到ros::spin()或ros::spinOnce()执行的时候才被调用，这就是消息回调函数的原理
+
     // 创建订阅者对象
-    ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback,
-                                          ros::TransportHints().tcpNoDelay()); // 订阅IMU消息
-    ros::Subscriber sub_feature = n.subscribe("/feature_tracker/feature", 2000,
-                                              feature_callback);              // 订阅feature_tracker所提供的跟踪光流点
-    ros::Subscriber sub_img0 = n.subscribe(IMAGE0_TOPIC, 100, img0_callback); // 订阅左目图像
-    ros::Subscriber sub_img1 = n.subscribe(IMAGE1_TOPIC, 100, img1_callback); // 订阅右目图像
+    ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay()); // 订阅IMU消息
+    ros::Subscriber sub_feature = n.subscribe("/feature_tracker/feature", 2000, feature_callback); // 订阅feature_tracker所提供的 跟踪光流点
+    ros::Subscriber sub_img0 = n.subscribe(IMAGE0_TOPIC, 100, img0_callback);                      // 订阅左目图像
+    ros::Subscriber sub_img1 = n.subscribe(IMAGE1_TOPIC, 100, img1_callback);                      // 订阅右目图像
 
     ros::Subscriber sub_restart = n.subscribe("/vins_restart", 100, restart_callback);          // 订阅，重启节点
     ros::Subscriber sub_imu_switch = n.subscribe("/vins_imu_switch", 100, imu_switch_callback); // 订阅，双目下，IMU开关
     ros::Subscriber sub_cam_switch = n.subscribe("/vins_cam_switch", 100, cam_switch_callback); // 订阅，单双目切换
 
-    // 创建线程执行函数sync_process。
-    // 作用：如果图像buffer里面有数据的话，读入数据并且添加到estimator中。
-    // 为什么不在左右目相机图像的回调函数就input？对于双目的话，能够检测同步问题，能够将同样时间戳的两帧图片同时放入estimator中。所以对于Imu以及feature直接在回调函数中进行添加。
+    //! 创建线程 sync_process：如果图像buffer里面有数据的话，读入数据并且添加到estimator中
+    // 为什么不在左右目相机图像的回调函数就input？对于双目的话，能够检测同步问题，能够将同样时间戳的两帧图片同时放入estimator中。所以对于IMU以及feature直接在回调函数中进行添加
     std::thread sync_thread{sync_process};
     ros::spin(); // 用于触发topic, service的响应队列
-
-    // 如果你的程序写了相关的消息订阅函数，那么程序在执行过程中，除了主程序以外，ROS还会自动在后台按照你规定的格式，接受订阅的消息，但是所接到的消息并不是立刻就被处理，
-    // 而是必须要等到ros::spin()或ros::spinOnce()执行的时候才被调用，这就是消息回调函数的原理
 
     return 0;
 }
