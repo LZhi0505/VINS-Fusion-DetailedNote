@@ -104,13 +104,9 @@ public:
         // 注:以下计算PVQ都是每时刻世界坐标系下(第一帧IMU系)的量，加速度、角速度都是IMU系下的量
 
         Vector3d un_acc_0 = delta_q * (_acc_0 - linearized_ba); // 前一时刻加速度
-
         Vector3d un_gyr = 0.5 * (_gyr_0 + _gyr_1) - linearized_bg; // 前一时刻与当前时刻角速度中值
-
         result_delta_q = delta_q * Quaterniond(1, un_gyr(0) * _dt / 2, un_gyr(1) * _dt / 2, un_gyr(2) * _dt / 2); // 当前时刻旋转位姿Q
-
         Vector3d un_acc_1 = result_delta_q * (_acc_1 - linearized_ba); // 当前时刻加速度
-
         Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1); // 前一时刻与当前时刻加速度中值
 
         // 更新当前时刻P, V, 其中Ba, Bg保持不变
@@ -279,7 +275,7 @@ public:
     Eigen::Vector3d acc_1, gyr_1; // 当前时刻的IMU数据
 
     const Eigen::Vector3d linearized_acc, linearized_gyr;
-    Eigen::Vector3d linearized_ba, linearized_bg; // 上一时刻的偏置ba、bg
+    Eigen::Vector3d linearized_ba, linearized_bg; // 上一时刻的零偏ba、bg
 
     Eigen::Matrix<double, 15, 15> jacobian, covariance;
     Eigen::Matrix<double, 15, 15> step_jacobian;

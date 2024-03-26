@@ -90,8 +90,7 @@ public:
     queue<pair<double, Eigen::Vector3d>> gyrBuf; // IMU的角速度数据buf，key：时间戳, value：角速度 {gyr_x, gyr_y, gyr_z}
 
     // featureTracker 追踪的 当前帧特征点信息
-    // key:时间戳,
-    // value:左右目特征点信息{feature_id，[camera_id(0为左目，1为右目),x,y,z(去畸变的归一化相机平面坐标),pu,pv(像素坐标),vx,vy(归一化相机平面（也可能是像素坐标）速度)]}
+    // key:时间戳，value:左右目特征点信息{feature_id，[camera_id(0为左目，1为右目),x,y,z(去畸变的归一化相机平面坐标),pu,pv(像素坐标),vx,vy(归一化相机平面（也可能是像素坐标）速度)]}
     queue<pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>>>> featureBuf;
 
     double prevTime, curTime; // 图像上一帧时间，图像当前帧时间
@@ -106,7 +105,8 @@ public:
     MarginalizationFlag marginalization_flag; // 边缘化策略 MARGIN_OLD | MARGIN_SECOND_NEW
     Vector3d g;                               // 重力
 
-    Matrix3d ric[2]; // 相机的外参矩阵 imu_R_cam，Rbc
+    // 左右目相机的外参矩阵
+    Matrix3d ric[2]; // imu_R_cam，Rbc
     Vector3d tic[2]; // imu_t_cam，tbc
 
     // 滑动窗口，待优化的变量，刚开始是通过IMU预积分得到初始值，后面会通过相机进一步优化

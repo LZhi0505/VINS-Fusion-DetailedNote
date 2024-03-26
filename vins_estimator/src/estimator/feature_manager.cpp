@@ -309,11 +309,11 @@ bool FeatureManager::solvePoseByPnP(Eigen::Matrix3d &R, Eigen::Vector3d &P, vect
  * 通过上一帧的Ps[frameCnt-1]、Rs[frameCnt-1]以及当前帧看到了所有恢复了深度的2D-3D，通过PnP确定Ps[frameCnt]、Rs[frameCnt]
  * 1、世界坐标-像素坐标
  * 2、用前一帧位姿初始化当前帧位姿
- * @param frameCnt  当前帧索引
- * @param Ps 滑动窗口中的相机位移 w_T_imu
- * @param Rs 滑动窗口中的相机姿态 w_T_imu
- * @param tic 相机的外参矩阵imu_t_cam，最多两个相机
- * @param ric 相机的外参矩阵imu_R_cam，最多两个相机
+ * @param frameCnt  当前帧在滑窗中的
+ * @param Ps 滑动窗口中的相机位置 twb
+ * @param Rs 滑动窗口中的相机姿态 Rwb
+ * @param tic 相机的外参矩阵 tbc，最多两个相机
+ * @param ric 相机的外参矩阵 Rbc，最多两个相机
  */
 void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vector3d tic[], Matrix3d ric[]) {
 
@@ -327,8 +327,7 @@ void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs
                 int index = frameCnt - it_per_id.start_frame;
                 // pnp为了求当前的位姿，因此得保障当前这个特征点能被当前帧所看到
                 if ((int)it_per_id.feature_per_frame.size() >= index + 1) {
-                    // 把3D特征点从发现该特征点的第一帧的相机坐标系 转到 相应
-                    // 该帧的IMU坐标系下
+                    // 把3D特征点从发现该特征点的第一帧的相机坐标系 转到 相应该帧的IMU坐标系下
                     Vector3d ptsInCam = ric[0] * (it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth) + tic[0];
                     // 然后再转到世界坐标系下
                     Vector3d ptsInWorld = Rs[it_per_id.start_frame] * ptsInCam + Ps[it_per_id.start_frame];

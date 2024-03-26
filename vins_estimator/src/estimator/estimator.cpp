@@ -643,8 +643,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                      * 系统初始化
                      * 1、计算滑窗内IMU加速度的标准差，用于判断移动快慢
                      * 2、在滑窗中找到与当前帧具有足够大的视差，同时匹配较为准确的一帧，计算相对位姿变换
-                     *   1)
-                     * 提取滑窗中每帧与当前帧之间的匹配点（要求点在两帧之间一直被跟踪到，属于稳定共视点），超过20个则计算视差
+                     *   1) 提取滑窗中每帧与当前帧之间的匹配点（要求点在两帧之间一直被跟踪到，属于稳定共视点），超过20个则计算视差
                      *   2) 两帧匹配点计算本质矩阵E，恢复R、t
                      *   3) 视差超过30像素，匹配内点数超过12个，则认为符合要求，返回当前帧
                      * 3、以上面找到的这一帧为参考系，Pnp计算滑窗每帧位姿，然后三角化所有特征点，构建BA（最小化点三角化前后误差）优化每帧位姿
@@ -803,9 +802,9 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         for (int i = 0; i <= WINDOW_SIZE; i++)
             key_poses.push_back(Ps[i]);
 
-        last_R = Rs[WINDOW_SIZE];   // 记录滑窗中最后一帧的旋转
+        last_R = Rs[WINDOW_SIZE]; // 记录滑窗中最后一帧的旋转
         last_P = Ps[WINDOW_SIZE];
-        last_R0 = Rs[0];    // 记录滑窗中最早一帧的旋转
+        last_R0 = Rs[0]; // 记录滑窗中最早一帧的旋转
         last_P0 = Ps[0];
 
         // 用优化后的当前帧位姿更新IMU积分的基础位姿，用于展示IMU轨迹
@@ -986,8 +985,7 @@ bool Estimator::initialStructure() {
 }
 
 /**
- * 视觉和惯性的对齐, 对应
- * https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw中的visualInitialAlign
+ * 视觉和惯性的对齐, 对应 https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw中的visualInitialAlign
  * 分为5步:
  * 1、估计旋转外参
  * 2、估计陀螺仪bias

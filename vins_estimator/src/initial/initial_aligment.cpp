@@ -1,8 +1,8 @@
 /*******************************************************
  * Copyright (C) 2019, Aerial Robotics Group, Hong Kong University of Science and Technology
- * 
+ *
  * This file is part of VINS.
- * 
+ *
  * Licensed under the GNU General Public License v3.0;
  * you may not use this file except in compliance with the License.
  *
@@ -12,13 +12,13 @@
 #include "initial_alignment.h"
 
 /**
- * todo
- * 零偏初始化
+ * @brief 陀螺仪零偏校正，并根据更新后的bg进行IMU积分更新
+ * @param all_image_frame 目前为止全部图像信息
+ * @param Bgs [out] 陀螺仪零偏
  * 1、用相邻两帧之间的相机旋转、IMU积分旋转，构建最小二乘问题，ldlt求解
- * 2、偏置更新后，重新计算IMU积分
-*/
-void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
-{
+ * 2、零偏更新后，重新计算IMU积分
+ */
+void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d *Bgs) {
     Matrix3d A;
     Vector3d b;
     Vector3d delta_bg;
@@ -27,44 +27,49 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
     map<double, ImageFrame>::iterator frame_i;
     map<double, ImageFrame>::iterator frame_j;
     // 从滑窗第一帧遍历到倒数第二帧
-    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++)
-    {
-        frame_j = next(frame_i);
+    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++) {
+        frame_j = next(frame_i); // 下一帧图像
+
         MatrixXd tmp_A(3, 3);
         tmp_A.setZero();
+
         VectorXd tmp_b(3);
         tmp_b.setZero();
-        // 与前一帧之间的旋转
+
+        // frame_j的body系转 到 frame_i的body系：inv(R_bi_w) * (R_w_bj) = R_bi_bj
         Eigen::Quaterniond q_ij(frame_i->second.R.transpose() * frame_j->second.R);
+        // tmp_A = J_gamma_bw
         tmp_A = frame_j->second.pre_integration->jacobian.template block<3, 3>(O_R, O_BG);
+        // tmp_b = 2 * inverse(gamma_bk_bk + 1) * q_ij
         tmp_b = 2 * (frame_j->second.pre_integration->delta_q.inverse() * q_ij).vec();
         A += tmp_A.transpose() * tmp_A;
         b += tmp_A.transpose() * tmp_b;
     }
+
+    // 求解方法参考：https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw 里面的公式31到公式33
     delta_bg = A.ldlt().solve(b);
     ROS_WARN_STREAM("gyroscope bias initial calibration " << delta_bg.transpose());
 
-    // 更新偏置
+    // 更新陀螺仪零偏
     for (int i = 0; i <= WINDOW_SIZE; i++)
         Bgs[i] += delta_bg;
 
-    // 更新偏置之后，重新计算积分
-    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end( ); frame_i++)
-    {
+    // 根据更新后的bg，重新计算IMU积分
+    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++) {
         frame_j = next(frame_i);
+        // 在VINS中，认为在初始化阶段ba对状态估计影响不大，所以设置为0
         frame_j->second.pre_integration->repropagate(Vector3d::Zero(), Bgs[0]);
     }
 }
 
 /**
  * todo
-*/
-MatrixXd TangentBasis(Vector3d &g0)
-{
+ */
+MatrixXd TangentBasis(Vector3d &g0) {
     Vector3d b, c;
     Vector3d a = g0.normalized();
     Vector3d tmp(0, 0, 1);
-    if(a == tmp)
+    if (a == tmp)
         tmp << 1, 0, 0;
     b = (tmp - a * (a.transpose() * tmp)).normalized();
     c = a.cross(b);
@@ -77,12 +82,11 @@ MatrixXd TangentBasis(Vector3d &g0)
 /**
  * todo
  * 重力向量优化
-*/
-void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
-{
+ */
+void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x) {
     Vector3d g0 = g.normalized() * G.norm();
     Vector3d lx, ly;
-    //VectorXd x;
+    // VectorXd x;
     int all_frame_count = all_image_frame.size();
     int n_state = all_frame_count * 3 + 2 + 1;
 
@@ -93,13 +97,11 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
 
     map<double, ImageFrame>::iterator frame_i;
     map<double, ImageFrame>::iterator frame_j;
-    for(int k = 0; k < 4; k++)
-    {
+    for (int k = 0; k < 4; k++) {
         MatrixXd lxly(3, 2);
         lxly = TangentBasis(g0);
         int i = 0;
-        for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++)
-        {
+        for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++) {
             frame_j = next(frame_i);
 
             MatrixXd tmp_A(6, 9);
@@ -109,21 +111,20 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
 
             double dt = frame_j->second.pre_integration->sum_dt;
 
-
             tmp_A.block<3, 3>(0, 0) = -dt * Matrix3d::Identity();
             tmp_A.block<3, 2>(0, 6) = frame_i->second.R.transpose() * dt * dt / 2 * Matrix3d::Identity() * lxly;
-            tmp_A.block<3, 1>(0, 8) = frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T) / 100.0;     
-            tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p + frame_i->second.R.transpose() * frame_j->second.R * TIC[0] - TIC[0] - frame_i->second.R.transpose() * dt * dt / 2 * g0;
+            tmp_A.block<3, 1>(0, 8) = frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T) / 100.0;
+            tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p + frame_i->second.R.transpose() * frame_j->second.R * TIC[0] - TIC[0] -
+                                      frame_i->second.R.transpose() * dt * dt / 2 * g0;
 
             tmp_A.block<3, 3>(3, 0) = -Matrix3d::Identity();
             tmp_A.block<3, 3>(3, 3) = frame_i->second.R.transpose() * frame_j->second.R;
             tmp_A.block<3, 2>(3, 6) = frame_i->second.R.transpose() * dt * Matrix3d::Identity() * lxly;
             tmp_b.block<3, 1>(3, 0) = frame_j->second.pre_integration->delta_v - frame_i->second.R.transpose() * dt * Matrix3d::Identity() * g0;
 
-
             Matrix<double, 6, 6> cov_inv = Matrix<double, 6, 6>::Zero();
-            //cov.block<6, 6>(0, 0) = IMU_cov[i + 1];
-            //MatrixXd cov_inv = cov.inverse();
+            // cov.block<6, 6>(0, 0) = IMU_cov[i + 1];
+            // MatrixXd cov_inv = cov.inverse();
             cov_inv.setIdentity();
 
             MatrixXd r_A = tmp_A.transpose() * cov_inv * tmp_A;
@@ -138,13 +139,13 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
             A.block<6, 3>(i * 3, n_state - 3) += r_A.topRightCorner<6, 3>();
             A.block<3, 6>(n_state - 3, i * 3) += r_A.bottomLeftCorner<3, 6>();
         }
-            A = A * 1000.0;
-            b = b * 1000.0;
-            x = A.ldlt().solve(b);
-            VectorXd dg = x.segment<2>(n_state - 3);
-            g0 = (g0 + lxly * dg).normalized() * G.norm();
-            //double s = x(n_state - 1);
-    }   
+        A = A * 1000.0;
+        b = b * 1000.0;
+        x = A.ldlt().solve(b);
+        VectorXd dg = x.segment<2>(n_state - 3);
+        g0 = (g0 + lxly * dg).normalized() * G.norm();
+        // double s = x(n_state - 1);
+    }
     g = g0;
 }
 
@@ -157,9 +158,8 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
  *   位置和速度与IMU预积分出来的位置和速度组成一个最小二乘法的形式，然后求解出来。
  * 2、重力向量优化
  *   进一步细化重力加速度，提高估计值的精度，形式与LinearAlignment是一致的，只是将g改为g⋅ĝ +w1b1+w2b2
-*/
-bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
-{
+ */
+bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x) {
     int all_frame_count = all_image_frame.size();
     int n_state = all_frame_count * 3 + 3 + 1;
 
@@ -172,8 +172,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     map<double, ImageFrame>::iterator frame_j;
     int i = 0;
     // 从滑窗第一帧遍历到倒数第二帧
-    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++)
-    {
+    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++) {
         frame_j = next(frame_i);
 
         MatrixXd tmp_A(6, 10);
@@ -186,18 +185,18 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
 
         tmp_A.block<3, 3>(0, 0) = -dt * Matrix3d::Identity();
         tmp_A.block<3, 3>(0, 6) = frame_i->second.R.transpose() * dt * dt / 2 * Matrix3d::Identity();
-        tmp_A.block<3, 1>(0, 9) = frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T) / 100.0;     
+        tmp_A.block<3, 1>(0, 9) = frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T) / 100.0;
         tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p + frame_i->second.R.transpose() * frame_j->second.R * TIC[0] - TIC[0];
-        //cout << "delta_p   " << frame_j->second.pre_integration->delta_p.transpose() << endl;
+        // cout << "delta_p   " << frame_j->second.pre_integration->delta_p.transpose() << endl;
         tmp_A.block<3, 3>(3, 0) = -Matrix3d::Identity();
         tmp_A.block<3, 3>(3, 3) = frame_i->second.R.transpose() * frame_j->second.R;
         tmp_A.block<3, 3>(3, 6) = frame_i->second.R.transpose() * dt * Matrix3d::Identity();
         tmp_b.block<3, 1>(3, 0) = frame_j->second.pre_integration->delta_v;
-        //cout << "delta_v   " << frame_j->second.pre_integration->delta_v.transpose() << endl;
+        // cout << "delta_v   " << frame_j->second.pre_integration->delta_v.transpose() << endl;
 
         Matrix<double, 6, 6> cov_inv = Matrix<double, 6, 6>::Zero();
-        //cov.block<6, 6>(0, 0) = IMU_cov[i + 1];
-        //MatrixXd cov_inv = cov.inverse();
+        // cov.block<6, 6>(0, 0) = IMU_cov[i + 1];
+        // MatrixXd cov_inv = cov.inverse();
         cov_inv.setIdentity();
 
         MatrixXd r_A = tmp_A.transpose() * cov_inv * tmp_A;
@@ -219,8 +218,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     ROS_DEBUG("estimated scale: %f", s);
     g = x.segment<3>(n_state - 4);
     ROS_DEBUG_STREAM(" result g     " << g.norm() << " " << g.transpose());
-    if(fabs(g.norm() - G.norm()) > 0.5 || s < 0)
-    {
+    if (fabs(g.norm() - G.norm()) > 0.5 || s < 0) {
         return false;
     }
 
@@ -228,22 +226,21 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     s = (x.tail<1>())(0) / 100.0;
     (x.tail<1>())(0) = s;
     ROS_DEBUG_STREAM(" refine     " << g.norm() << " " << g.transpose());
-    if(s < 0.0 )
-        return false;   
+    if (s < 0.0)
+        return false;
     else
         return true;
 }
 
 /**
  * Camera视觉与IMU初始化，零偏、尺度、重力方向
-*/
-bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x)
-{
+ */
+bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d *Bgs, Vector3d &g, VectorXd &x) {
     /**
      * 零偏初始化
      * 1、用相邻两帧之间的相机旋转、IMU积分旋转，构建最小二乘问题，ldlt求解
      * 2、偏置更新后，重新计算IMU积分
-    */
+     */
     // 更新得到新的陀螺仪漂移Bgs
     // 对应视觉IMU对齐的第二部分
     // 对应https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw中的公式31-34
@@ -253,6 +250,6 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
     // 对应 https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw 中的公式34-36
     if (LinearAlignment(all_image_frame, g, x))
         return true;
-    else 
+    else
         return false;
 }

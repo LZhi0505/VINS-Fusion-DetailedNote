@@ -34,4 +34,5 @@ public:
     bool is_key_frame;
 };
 void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d *Bgs);
+// 单目+IMU的初始化会用到，Estimator::initialStructure --> Estimator::visualInitialAlign 里调用
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d *Bgs, Vector3d &g, VectorXd &x);

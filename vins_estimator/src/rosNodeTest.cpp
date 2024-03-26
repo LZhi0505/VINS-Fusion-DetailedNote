@@ -284,12 +284,12 @@ int main(int argc, char **argv) {
 
     ROS_WARN("waiting for image and imu...");
 
-    // 创建话题发布者对象vins_estimator，在此节点下发布话题
+    // 发布用于RVIZ显示的Topic创建
     registerPub(n);
 
     /*
     ros::Subscriber subscribe (const std::string &topic, uint32_t queue_size, void(*fp)(M), const TransportHints &transport_hints=TransportHints())
-    参数1：订阅话题的名称；
+    参数1：订阅Topic的名称；
     参数2：订阅队列的长度；（如果收到的消息都没来得及处理，那么新消息入队，旧消息就会出队）；
     参数3：回调函数的指针，指向回调函数来处理接收到的消息！
     参数4：似乎与延迟有关系，暂时不关心。（该成员函数有13重载）
