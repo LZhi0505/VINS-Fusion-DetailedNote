@@ -76,7 +76,7 @@ public:
     // pts_velocity：当前帧特征点中是上一帧跟踪得到的特征点的速度；right_pts_velocity：右目的特征点速度（在归一化平面x,y方向上的移动速度）
     vector<cv::Point2f> pts_velocity, right_pts_velocity;
 
-    // ids：当前帧识别到的特征点ID号；ids_right：当前帧右目识别到的特征点ID号
+    // ids：当前帧识别到的特征点ID；ids_right：当前帧右目识别到的特征点ID
     vector<int> ids, ids_right;
 
     // 当前帧识别到的特征点的连续帧跟踪次数（比如跟踪次数为2表示该特征点在当前帧、上一帧中都被识别，所以里面的跟踪次数至少为1，也就是当前帧被识别到）

@@ -62,10 +62,8 @@ Marginalization。到底是删去最旧的帧（MARGIN_OLD）还是删去刚
  * 1.该帧新的特征点很多，认为是关键帧
  * 2.该帧新特征点虽然不多，但是如果特征点在上一帧和上上帧中视差变化大，则也认为是关键帧，否则不是关键帧
  * @param frame_count   当前帧在滑窗中的索引
- * @param image         当前帧的特征点信息 feature_id：[camera_id
- * (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv (像素坐标),
- * vx, vy (归一化相机平面移动速度)]
- * @param td            IMU和cam的时间误差 cam_time + td = imu_time
+ * @param image         当前帧的特征点信息 feature_id：[camera_id,x,y,z(去畸变的归一化相机平面坐标),pu,pv(像素坐标),vx,vy(归一化相机平面移动速度)]
+ * @param td            IMU和camera的时间误差 cam_time + td = imu_time
  * @return bool true：是关键帧，边缘化最旧帧; false：不是关键帧，边缘化次新帧
  */
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td) {
@@ -77,8 +75,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     last_average_parallax = 0;
     new_feature_num = 0;
     long_track_num = 0;
-    // 1.
-    // 遍历当前帧的全部特征点，如果是第一次观测到的特征点，就加入到feature大家庭中；如果是已出现的特征点，只需更新观测次数即可
+    // 1.遍历当前帧的全部特征点，如果是第一次观测到的特征点，就加入到feature大家庭中；如果是已出现的特征点，只需更新观测次数即可
     for (auto &id_pts : image) {
         // 添加左目的特征点
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
@@ -137,8 +134,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     if (parallax_num == 0) {
         return true;
     } else {
-        // 2.2
-        // 该帧新特征点虽然不多，但是如果特征点在上一帧和上上帧中视差变化大，则也说明该帧变换很大，否则该帧变换很小
+        // 2.2该帧新特征点虽然不多，但是如果特征点在上一帧和上上帧中视差变化大，则也说明该帧变换很大，否则该帧变换很小
         // 前两帧之间视差是否足够大（像素坐标系下10个像素），足够大，删除滑窗最早帧；不够大，删除倒数第3帧；
         // MIN_PARALLAX = 10 / f
         ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);

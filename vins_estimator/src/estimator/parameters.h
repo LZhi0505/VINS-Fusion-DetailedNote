@@ -34,9 +34,9 @@ extern int ESTIMATE_EXTRINSIC; //是否在线估计外参
 extern double ACC_N, ACC_W;
 extern double GYR_N, GYR_W;
 
-extern std::vector<Eigen::Matrix3d> RIC; // 外参旋转
+extern std::vector<Eigen::Matrix3d> RIC; // 左右目到IMU的外参旋转
 extern std::vector<Eigen::Vector3d> TIC; // 外参平移
-extern Eigen::Vector3d G;                //重力常量（3*1矢量）
+extern Eigen::Vector3d G;                // 重力常量（3*1矢量）
 
 extern double BIAS_ACC_THRESHOLD;
 extern double BIAS_GYR_THRESHOLD;

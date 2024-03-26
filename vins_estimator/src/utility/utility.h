@@ -68,7 +68,7 @@ public:
     }
 
     /**
-     * 从旋转矩阵计算 Yaw、Pitch、Roll姿态角，单位为 度°
+     * 旋转矩阵 ==> Yaw、Pitch、Roll姿态角，单位为 度°
      */
     static Eigen::Vector3d R2ypr(const Eigen::Matrix3d &R) {
         Eigen::Vector3d n = R.col(0);
@@ -77,14 +77,14 @@ public:
 
         // 保存欧拉角
         Eigen::Vector3d ypr(3);
-        double y = atan2(n(1), n(0));
-        double p = atan2(-n(2), n(0) * cos(y) + n(1) * sin(y));
-        double r = atan2(a(0) * sin(y) - a(1) * cos(y), -o(0) * sin(y) + o(1) * cos(y));
+        double y = atan2(n(1), n(0));                                                    // 偏航角：物体绕z轴的旋转
+        double p = atan2(-n(2), n(0) * cos(y) + n(1) * sin(y));                          // 绕y轴
+        double r = atan2(a(0) * sin(y) - a(1) * cos(y), -o(0) * sin(y) + o(1) * cos(y)); // 绕x轴
         ypr(0) = y;
         ypr(1) = p;
         ypr(2) = r;
 
-        // 单位转换为 度 °
+        // 弧度转换为 度 °
         return ypr / M_PI * 180.0;
     }
 

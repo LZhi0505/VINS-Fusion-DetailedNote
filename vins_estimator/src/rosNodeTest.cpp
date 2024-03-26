@@ -86,7 +86,7 @@ cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg) {
 }
 
 /**
- * 获取时间同步(时间戳差值<0.003s)后的 左右目照片。传入到estimator中，调用inputImage进行处理
+ * 获取时间同步(时间戳差值<0.003s)后的 左右目照片。传入到estimator中，调用inputImage进行处理，追踪当前帧特征点，并调用processMeasurements线程进行后续处理
  */
 void sync_process() {
     while (1) {

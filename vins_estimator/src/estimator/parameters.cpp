@@ -122,10 +122,9 @@ void readParameters(std::string config_file) {
     std::ofstream fout(VINS_RESULT_PATH, std::ios::out);
     fout.close();
 
-    // 先获取左目与IMU的外参 到 RIC TIC
+    // 先获取左目到IMU的外参 到 RIC[0] TIC[0]
     ESTIMATE_EXTRINSIC =
-        fsSettings["estimate_extrinsic"]; // 0:
-                                          // 有确定的Tbc外参；1有初始估计的外参，之后还要优化；2没有外参，需要标定，Ric初始化为单位阵，tic初始化为零向量
+        fsSettings["estimate_extrinsic"]; // 0：有确定的Tbc外参；1：有初始估计的外参，之后还要优化；2：没有外参，需要标定，Ric初始化为单位阵，tic初始化为零向量
     // 不使用配置文件里面的传感器参数，实际参数完全靠vins的优化得到
     if (ESTIMATE_EXTRINSIC == 2) {
         ROS_WARN("have no prior about extrinsic param, calibrate extrinsic param");
@@ -179,7 +178,7 @@ void readParameters(std::string config_file) {
         // printf("%s cam1 path\n", cam1Path.c_str() );
         CAM_NAMES.push_back(cam1Path);
 
-        // 再获取右目与IMU的外参 到 RIC TIC
+        // 再获取右目到IMU的外参 到 RIC[1] TIC[1]
         cv::Mat cv_T;
         fsSettings["body_T_cam1"] >> cv_T;
         Eigen::Matrix4d T;

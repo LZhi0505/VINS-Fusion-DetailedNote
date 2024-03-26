@@ -171,29 +171,28 @@ void Estimator::changeSensorType(int use_imu, int use_stereo) {
 }
 
 /**
- * 输入一帧的左右目图片(或单目)，会执行VO优化得到位姿
- * 1、featureTracker，提取当前帧特征点
- * 2、添加一帧特征点，processMeasurements处理
+ * 输入一帧的左右目图片(或单目)，使用 featureTracker 追踪当前帧特征点；并添加到featureBuf中，多线程会在processMeasurements线程处理
  * @param t 当前帧时间戳
  * @param _img  左目图像
  * @param _img1 右目图像
  */
 void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1) {
-    inputImageCnt++;
+
+    inputImageCnt++; // 输入图片个数+1
+
     // featureFrame: feature_id，[camera_id (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx, vy(归一化相机平面移动速度)]
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> featureFrame;
     TicToc featureTrackerTime;
 
     // 1. featureTracker::trackImage() 提取特征点，跟踪当前帧
-    // 更新特征点跟踪次数；保存当前帧特征点数据（归一化相机平面坐标，像素坐标，相对于前一帧的归一化相机平面移动速度）
+    // 更新特征点跟踪次数；保存当前帧特征点数据（归一化相机平面坐标，像素坐标，相对于上一帧的归一化相机平面移动速度）
     if (_img1.empty())
         featureFrame = featureTracker.trackImage(t, _img);
     else
         featureFrame = featureTracker.trackImage(t, _img, _img1);
     // printf("featureTracker time: %f\n", featureTrackerTime.toc());
 
-    // 2.
-    // 发布加上特征点后的图片（用蓝点和红点标注跟踪次数不同的特征点，红色少，蓝色多，画箭头指向前一帧特征点位置；如果是双目，右图画个绿色点）
+    // 2. 发布加上特征点后的图片（用蓝点和红点标注跟踪次数不同的特征点，红色少，蓝色多，画箭头指向前一帧特征点位置；如果是双目，右图画个绿色点）
     if (SHOW_TRACK) {
         cv::Mat imgTrack = featureTracker.getTrackImage();
         pubTrackImage(imgTrack, t);
@@ -205,9 +204,8 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1) 
     if (MULTIPLE_THREAD) {
         if (inputImageCnt % 2 == 0) {
             mBuf.lock();
-            // featureBuf: 时间戳, {feature_id，[camera_id (0为左目，1为右目), x, y, z
-            // (去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx, vy
-            // (归一化相机平面移动速度)]}
+            // featureBuf: 时间戳, {feature_id，[camera_id (0为左目，1为右目), x, y, z(去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx,
+            // vy(归一化相机平面移动速度)]}
             featureBuf.push(make_pair(t, featureFrame));
             // 这里没有调用函数processMeasurements是因为多线程在前面estimator.setParameter()中已经开启了该函数的线程
             mBuf.unlock();
@@ -273,11 +271,11 @@ void Estimator::inputFeature(double t, const map<int, vector<pair<int, Eigen::Ma
 }
 
 /**
- * 从IMU数据队列 accBuf、gyrBuf 中，提取(t0, t1)时间段的数据
- * @param t0    前一帧时间戳
+ * 从IMU数据队列 accBuf、gyrBuf 中，提取 上一帧 到 当前帧 的数据
+ * @param t0    上一帧时间戳
  * @param t1    当前帧时间戳
- * @param accVector 输出的加速度数据
- * @param gyrVector 输出的陀螺仪数据
+ * @param accVector [out] 两帧间的 加速度数据
+ * @param gyrVector [out] 两帧间的 陀螺仪数据
  * @return 找到返回true，否则返回false
  */
 bool Estimator::getIMUInterval(double t0, double t1, vector<pair<double, Eigen::Vector3d>> &accVector, vector<pair<double, Eigen::Vector3d>> &gyrVector) {
@@ -319,7 +317,7 @@ bool Estimator::getIMUInterval(double t0, double t1, vector<pair<double, Eigen::
  * @return
  */
 bool Estimator::IMUAvailable(double t) {
-    // 加速度队列有有数据 且 当前帧时间<=加速度队列中最后一个数据的时间，说明存完了前一帧到当前帧的IMU数据
+    // 加速度队列有数据 且 当前帧时间<=加速度数据队列中最后一个数据的时间，说明存完了前一帧到当前帧的IMU数据
     if (!accBuf.empty() && t <= accBuf.back().first)
         return true;
     else
@@ -340,14 +338,13 @@ void Estimator::processMeasurements() {
         // 存储一帧图像的特征点信息，key：时间戳，value：特征点数据
         pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>>> feature;
 
-        // 两帧图像之间的IMU数据，key是时间戳，value是IMU数据值 (加速度计/陀螺仪数据)
+        // 两帧图像之间的IMU数据，key：时间戳，value：IMU数据值 (加速度计/陀螺仪数据)
         vector<pair<double, Eigen::Vector3d>> accVector, gyrVector;
 
-        // featureBuf 中有东西，开始进行以下处理
-        // 有图像数据后，程序才发给跟踪器叫他产生feature，因此当featureBuf不等于空，所有的buffer，包括imu,图像，都不为空
+        // featureBuf 中有数据，开始进行以下处理
+        // 有图像数据到img_buf后，程序才发给featureTracker叫它产生feature，存入featureBuf中。因此featureBuf不为空，则所有的buffer，包括IMU、图像都不为空
         if (!featureBuf.empty()) {
-            // 1. 取出当前帧识别的特征点信息: key: 时间戳, value: feature_id，[camera_id (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv
-            // 像素坐标), vx, vy (归一化相机平面移动速度)]
+            // 1.取出当前帧识别的特征点信息：key：时间戳,value：feature_id，[camera_id(0为左目，1为右目),x,y,z(去畸变的归一化相机平面坐标),pu,pv(像素坐标),vx,vy(归一化相机平面移动速度)]
             feature = featureBuf.front();
 
             // 由于触发器等各种原因，IMU和图像帧之间存在时间延迟，因此需要进行补偿。秦通博士处理：将td认为是一个常值（在极短时间内是不变化的）
@@ -371,7 +368,7 @@ void Estimator::processMeasurements() {
 
             mBuf.lock();
 
-            // 3. 获取前一帧与当前帧图像之间的IMU数据：时间戳，加速度计/陀螺仪数据提取出来，存入accVector、gyrVector中
+            // 3. 获取上一帧与当前帧图像之间的IMU数据：(时间戳，加速度计/陀螺仪数据)提取出来，存入accVector、gyrVector中
             if (USE_IMU)
                 getIMUInterval(prevTime, curTime, accVector, gyrVector);
 
@@ -381,16 +378,16 @@ void Estimator::processMeasurements() {
 
             // 4. IMU积分更新位姿
             if (USE_IMU) {
-                // 如果第一帧的IMU位姿未初始化，则初始化
+                // 如果第一帧的IMU位姿未完成初始化，则初始化
                 if (!initFirstPoseFlag) {
-                    // 因为IMU不是水平放置，所以Z轴和{0,0, 1.0}对齐，通过对齐获得Rs[0]的初始位姿将初始时刻加速度方向对齐重力加速度方向，得到一个旋转矩阵，使得初始IMU的z轴指向重力加速度方向
+                    // 因为IMU不是水平放置，所以Z轴不和{0,0, 1.0}对齐，通过对齐获得Rs[0]的初始位姿将初始时刻加速度方向对齐重力加速度方向，得到一个旋转矩阵，使得初始IMU的z轴指向重力加速度方向
                     initFirstIMUPose(accVector);
                 }
 
                 // 第一帧的IMU位姿已初始化，则进行 IMU积分
                 // 用前一图像帧位姿，前一图像帧与当前图像帧之间的IMU数据，积分计算得到当前图像帧位姿 Rs，Ps，Vs
 
-                // 遍历两帧间的IMU数据，对相邻时刻的IMU数据，进行积分
+                // 遍历两帧之间的IMU数据，对相邻时刻的IMU数据，进行积分
                 for (size_t i = 0; i < accVector.size(); i++) {
                     // 前一时刻 到 当前时刻的 dt
                     double dt;
@@ -401,7 +398,7 @@ void Estimator::processMeasurements() {
                     } else {
                         dt = accVector[i].first - accVector[i - 1].first;
                     }
-                    //! IMU预积分，更新位姿
+                    //! IMU积分，更新位姿
                     processIMU(accVector[i].first, dt, accVector[i].second, gyrVector[i].second);
                 }
             }
@@ -439,35 +436,36 @@ void Estimator::processMeasurements() {
 }
 
 /**
- * 初始第一帧的 IMU姿态初始化
+ * 初始第一帧的 IMU位姿初始化
  * 用初始时刻加速度方向对齐重力加速度方向，得到一个旋转矩阵，使得初始IMU的z轴指向重力加速度方向
- * @param accVector     第一帧t0-t1时间段的加速度数据
+ * @param accVector     第一帧t0-t1间的加速度 (key:某时刻，value加速度)
  */
 void Estimator::initFirstIMUPose(vector<pair<double, Eigen::Vector3d>> &accVector) {
     printf("init first imu pose\n");
     initFirstPoseFlag = true;
     // return;
 
-    //! step1: 计算这段时间的平均加速度
-    Eigen::Vector3d averAcc(0, 0, 0); // 平均加速度初始化为0
-    int n = (int)accVector.size();    // 这段时间的加速度数据 个数
+    //! step1: 计算第一帧图像时间内IMU加速度数据的平均值
+    Eigen::Vector3d averAcc(0, 0, 0);
+    int n = (int)accVector.size();
     for (size_t i = 0; i < accVector.size(); i++) {
         averAcc = averAcc + accVector[i].second;
     }
     averAcc = averAcc / n;
     printf("averge acc %f %f %f\n", averAcc.x(), averAcc.y(), averAcc.z());
 
-    //! step2: 计算初始IMU的z轴对齐到重力加速度方向所需的旋转矩阵
+    //! step2: 将IMU的Z轴与重力方向的对齐 的旋转矩阵的初值 g_R_z
     // 后面每时刻的位姿都是在当前初始IMU坐标系下的，乘上R0就是世界坐标系了
     // 如果初始时刻IMU是绝对水平放置，那么z轴是对应重力加速度方向的，但如果倾斜了，那么就是需要这个旋转让它竖直
     Matrix3d R0 = Utility::g2R(averAcc);
 
-    // 获取这个旋转矩阵的yaw角（绕z轴转），单位为°
-    double yaw = Utility::R2ypr(R0).x(); // 已经是0了，后面似乎多余
-    // cout << "init R0 before " << endl << R0 << endl;
-    // cout << "yaw:" << yaw << endl;
+    // 下面两行，感觉重复了，已经在Utility::g2R函数里面执行过了
+    double yaw = Utility::R2ypr(R0).x(); // 这个旋转矩阵的yaw角（绕z轴转），单位为°
+    cout << "init R0 before " << endl << R0 << endl;
+    cout << "yaw:" << yaw << endl;
     R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
-    Rs[0] = R0;
+
+    Rs[0] = R0; // 记录第一帧的世界坐标系下的IMU旋转
     cout << "init R0 " << endl << Rs[0] << endl;
     // Vs[0] = Vector3d(5, 0, 0);
 }
@@ -481,32 +479,33 @@ void Estimator::initFirstPose(Eigen::Vector3d p, Eigen::Matrix3d r) {
 
 /**
  * IMU预积分，积分结果会作为后端非线性优化的初始值，包括RPV和delta_RPV
- * 用前一图像帧位姿，前一图像帧与当前图像帧之间的IMU数据，积分计算得到当前图像帧位姿 Rs，Ps，Vs
- * @param t                     两帧间IMU数据 某时刻
- * @param dt                    与前一IMU时刻的 间隔
- * @param linear_acceleration   当前时刻IMU加速度
- * @param angular_velocity      当前时刻IMU角速度
+ * 用前一图像帧位姿，前一图像帧与当前图像帧之间的IMU数据，积分计算得到当前图像帧位姿 Rs[i]、Ps[i]、Vs[i]
+ * @param t                     当前时刻
+ * @param dt                    与上一时刻的 间隔
+ * @param linear_acceleration   当前时刻的加速度
+ * @param angular_velocity      当前时刻角速度
  */
 void Estimator::processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity) {
-    // 未处理过第一帧的IMU数据
+    // 如果是该函数第一次处理IMU数据，就把当前时刻IMU数据保存为上一时刻的IMU数据
     if (!first_imu) {
         first_imu = true;
         acc_0 = linear_acceleration;
         gyr_0 = angular_velocity;
     }
 
-    // 滑动窗口内的第frame_count帧，即当前帧，未创建预积分器
+    // 如果当前帧图像到上一帧图像 还没有创建滑动窗口的IMU预积分类，就创建它
     if (!pre_integrations[frame_count]) {
-        // 则新建一个
         pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     }
 
+    // 如果当前帧不是第一帧，还需要计算IMU积分结果
     if (frame_count != 0) {
-        // 当前帧的预积分器，添加前一图像帧与当前图像帧之间的 每个时刻的IMU数据
-        // push_back重载的时候就已经进行了预积分
+        // 1.计算得到的IMU预积分pre_integrations[frame_count]，（这里预积分结果是相对值PVQ，即P代表该时刻相对于上一帧图像的位置变化），作为后端非线性优化的一个输入
+        // push_back前一图像帧与当前图像帧之间的 每个时刻的IMU数据。push_back重载的时候就已经进行了预积分
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
 
         // if(solver_flag != NON_LINEAR)
+        // 这里没必要重复计算
         tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
 
         // 缓存IMU数据
@@ -514,58 +513,70 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
         angular_velocity_buf[frame_count].push_back(angular_velocity);
 
-        // Rs Ps Vs是frame_count这一个图像帧开始的预积分值,是在绝对坐标系下的
-        int j = frame_count;
-        // 前一时刻加速度 （去除了零偏）
+        // 2.利用前一帧图像和当前帧图像之间的IMU数据，更新当前帧的位姿Rs[i]、Ps[i]、Vs[i]，作为后端非线性优化的初始值
+        // Rs Ps Vs是frame_count这一个图像帧开始的预积分值, 是在绝对坐标系下的.（这里预积分结果是当前的绝对值PVQ，即P就代表该时刻的位置）
+        int j = frame_count; // 更新上一时刻为 新时刻
+
+        // 2.1. 计算上一时刻的加速度真值（去除零偏）
         Vector3d un_acc_0 = Rs[j] * (acc_0 - Bas[j]) - g;
-        // 中值积分，用前一时刻与当前时刻角速度平均值，对时间积分
+
+        // 2.2.计算当前时刻的角速度真值（世界系）（中值积分，用前一时刻与当前时刻角速度平均值，对时间积分）
         Vector3d un_gyr = 0.5 * (gyr_0 + angular_velocity) - Bgs[j];
-        // 当前时刻姿态Q
+
+        // 2.3.更新为 当前时刻的 旋转矩阵Q
         Rs[j] *= Utility::deltaQ(un_gyr * dt).toRotationMatrix();
-        // 当前时刻加速度
+
+        // 2.4.计算当前时刻的 加速度真值：使用新旋转矩阵 和 当前时刻加速度观测值
         Vector3d un_acc_1 = Rs[j] * (linear_acceleration - Bas[j]) - g;
-        // 中值积分，用前一时刻与当前时刻加速度平均值，对时间积分
+
+        // 2.5.计算平均两个时刻后的 加速度真值（中值积分，用前一时刻与当前时刻加速度平均值，对时间积分）
         Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
-        // 当前时刻位置P
+
+        // 2.6.更新为 当前时刻的 位置P: p0 + v0 t + 1/2 a t^2
         Ps[j] += dt * Vs[j] + 0.5 * dt * dt * un_acc;
-        // 当前时刻速度V
+
+        // 2.7.更新为 当前时刻的 速度V: v0 + a t
         Vs[j] += dt * un_acc;
     }
+    // 上一时刻的IMU数据 更新为 当前时刻的值
     acc_0 = linear_acceleration;
     gyr_0 = angular_velocity;
 }
 
 /**
  * 对图像特征点和IMU预积分结果进行后端非线性优化：
+ * 1.判断当前帧是否为关键帧，同时完成特征点和帧之间关系的建立
+ * 2.进行camera到IMU(body)外参的标定
+ * 3.如果还没有初始化，先完成初始化
+ * 4.如果完成了初始化，就进行后端优化
+ *
  * 1、提取前一帧与当前帧的匹配点
  * 2、在线标定外参旋转
  *     利用两帧之间的Camera旋转和IMU积分旋转，构建最小二乘问题，SVD求解外参旋转
- *     1)
- * Camera系，两帧匹配点计算本质矩阵E，分解得到四个解，根据三角化成功点比例确定最终正确解
- * R、t，得到两帧之间的旋转R 2) IMU系，积分计算两帧之间的旋转 3)
- * 根据旋转构建最小二乘问题，SVD求解外参旋转 3、系统初始化 4、3d-2d
- * Pnp求解当前帧位姿 5、三角化当前帧特征点
+ *     1) Camera系，两帧匹配点计算本质矩阵E，分解得到四个解，根据三角化成功点比例确定最终正确解R、t，得到两帧之间的旋转R
+ *     2) IMU系，积分计算两帧之间的旋转
+ *     3) 根据旋转构建最小二乘问题，SVD求解外参旋转
+ * 3、系统初始化
+ * 4、3d-2dPnp求解当前帧位姿
+ * 5、三角化当前帧特征点
  * 6、滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
  * 7、剔除outlier点
  * 8、用当前帧与前一帧位姿变换，估计下一帧位姿，初始化下一帧特征点的位置
  * 9、移动滑窗，更新特征点的观测帧集合、观测帧索引（在滑窗中的位置）、首帧观测帧和深度值，删除没有观测帧的特征点
  * 10、删除优化后深度值为负的特征点
- * @param image  当前帧特征  feature_id，[camera_id (0为左目，1为右目), x, y, z
- * (去畸变的归一化相机平面坐标), pu, pv (像素坐标), vx, vy
- * (归一化相机平面移动速度)]
+ * @param image，当前帧左右目特征点信息：feature_id，[camera_id,x,y,z(去畸变的归一化相机平面坐标),pu,pv(像素坐标),vx,vy(归一化相机平面移动速度)]
  * @param header 当前帧时间戳
  */
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header) {
     ROS_DEBUG("new image coming ------------------------------------------");
     ROS_DEBUG("Adding feature points %lu", image.size());
     // VINS为了减少优化的计算量，只优化滑动窗口内的帧，因此保证滑动窗口内帧的质量很关键，每来新的一帧是一定会加入到滑动窗口中的，
-    // 但是要挤出去的是上一帧还是窗口最旧帧
-    // 是依据新的一帧是否为关键帧决定，保证了滑动窗口中处理的最新帧可能不是关键帧，其他帧都会是关键帧
+    // 但是要挤出去的是上一帧还是窗口最旧帧是依据新的一帧是否为关键帧决定，保证了滑动窗口中处理的最新帧可能不是关键帧，其他帧都会是关键帧
 
     // 1. 判断当前帧是否为关键帧，同时完成特征点和帧之间关系的建立
     if (f_manager.addFeatureCheckParallax(frame_count, image, td)) {
         marginalization_flag = MARGIN_OLD; // 如果当前帧为关键帧，则边缘化marg滑动窗口中最旧的帧
-                                           // printf("keyframe\n");
+        // printf("keyframe\n");
     } else {
         marginalization_flag =
             MARGIN_SECOND_NEW; // 如果不是关键帧，边缘化marg滑动窗口的上一帧（为什么不是关键帧要把此新帧踢出去，因为是否关键帧是判断其与前面几帧的视差大不大）
@@ -577,21 +588,21 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
     Headers[frame_count] = header;
 
+    // 创建一帧
     ImageFrame imageframe(image, header);
 
-    imageframe.pre_integration = tmp_pre_integration; // 当前帧预积分（前一帧与当前帧之间的IMU预积分）
+    imageframe.pre_integration = tmp_pre_integration; // 设置当前帧预积分（前一帧与当前帧之间的IMU预积分）
 
-    // 把输入图像插入到 all_image_frame 中
+    // 把输入图像帧插入到 all_image_frame 中
     all_image_frame.insert(make_pair(header, imageframe));
     // 重置预积分器
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
 
-    // 2.
-    // 进行camera到IMU(body)外参的标定。如果成功则把ESTIMATE_EXTRINSIC置1,输出ric和RIC
-    // 2表示没有外参，需要标定，Ric初始化为单位阵，tic初始化为零向量。0:
-    // 有确定的Tbc外参；1: 有初始估计的外参，之后还要优化；
+    // 2.进行camera到IMU(body)外参的标定。如果成功则把ESTIMATE_EXTRINSIC置1, 输出ric和RIC
+    // ESTIMATE_EXTRINSIC=2：没有外参，需要标定，Ric初始化为单位阵，tic初始化为零向量。0：有确定的Tbc外参；1：有初始估计的外参，之后还要优化
     if (ESTIMATE_EXTRINSIC == 2) {
         ROS_INFO("calibrating extrinsic param, rotation movement is needed");
+        // 当前帧不是第一帧
         if (frame_count != 0) {
             // 找到frame_count - 1帧和frame_count帧的匹配特征点对
             vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
@@ -608,6 +619,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric)) {
                 ROS_WARN("initial extrinsic rotation calib success");
                 ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
+                // 将左目相机的外参初始化为 在线标定得到的
                 ric[0] = calib_ric;
                 RIC[0] = calib_ric;
                 // 然后标记变为：提供外参初始值，但需优化
@@ -667,35 +679,39 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         if (STEREO && USE_IMU) {
             // PnP求解当前帧的位姿：w_T_imu
             f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
-            // 双目三角化，恢复所有帧的特征点深度，结果放入 feature 的 estimated_depth
-            // 中
+            // 双目三角化，恢复所有帧的特征点深度，结果放入 feature 的 estimated_depth中
             f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
 
             // 如果滑动窗口第一次满了
             if (frame_count == WINDOW_SIZE) {
                 map<double, ImageFrame>::iterator frame_it;
                 int i = 0;
+                // 将滑动窗口内的所有图像帧的位姿 当前帧的位姿
                 for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++) {
                     frame_it->second.R = Rs[i];
                     frame_it->second.T = Ps[i];
                     i++;
                 }
 
-                // // 陀螺仪零偏校正，并根据更新后的bg进行IMU积分更新
+                // 陀螺仪零偏校正，并根据更新后的bg进行IMU积分更新
                 solveGyroscopeBias(all_image_frame, Bgs);
-                // 依据新的IMU的加速度和角速度偏置值，重新IMU预积分（预积分的好处在于当得到新的Bgs，不需要重新再积分一遍，可以通过Bgs对位姿，速度的一阶导数，进行线性近似，得到新的Bgs求解出IMU的最终结果）
+
+                // 根据新的IMU的加速度和角速度零偏，对滑动窗口内的各帧重新IMU预积分（预积分的好处在于当得到新的Bgs，不需要重新再积分一遍，可以通过Bgs对位姿，速度的一阶导数，进行线性近似，得到新的Bgs求解出IMU的最终结果）
                 for (int i = 0; i <= WINDOW_SIZE; i++) {
                     pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
                 }
 
-                // 初始化成功了，就执行后端非线性优化
-                // 滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
+                //! 执行后端非线性优化：滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
                 optimization();
+
                 // 用优化后的当前帧位姿更新IMU积分的基础位姿，用于展示IMU轨迹
                 updateLatestStates();
+
                 solver_flag = NON_LINEAR;
+
                 // 移动滑窗，更新特征点的观测帧集合、观测帧索引（在滑窗中的位置）、首帧观测帧和深度值，删除没有观测帧的特征点
                 slideWindow();
+
                 ROS_INFO("Initialization finish!");
             }
         }
@@ -721,11 +737,10 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             }
         }
 
-        // 如果滑动窗口还没有满就添加到滑动窗口中
+        // 如果滑动窗口还没有满，就添加到滑动窗口中
         if (frame_count < WINDOW_SIZE) {
             frame_count++;
-            // 注意，这里frame_count已经是下一帧的索引了，这里就是把当前帧估计的位姿
-            // 当作 下一帧的初始值
+            // 注意，这里frame_count已经是下一帧的索引了，这里就是把 滑窗中当前帧估计的位姿 当作 下一帧的初始值
             int prev_frame = frame_count - 1;
             Ps[frame_count] = Ps[prev_frame];
             Vs[frame_count] = Vs[prev_frame];
@@ -735,27 +750,30 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         }
 
     }
-    // 4. 如果完成了初始化，就进行后端优化
-    // 在完成初始化后就只进行后端非线性优化了，还是需要将滑窗中的特征点尽可能多地恢复出对应的3D点，获取多帧之间更多的约束，
-    // 进而得到更多的优化观测量, 使得优化结果更加鲁棒
+    //! 4. 如果完成了初始化，就只进行后端优化
+    // 还是需要将滑窗中的特征点尽可能多地恢复出对应的3D点，获取多帧之间更多的约束，进而得到更多的优化观测量, 使得优化结果更加鲁棒
     else {
         TicToc t_solve;
+
         // 纯视觉，3d-2d PnP求解当前帧位姿
         if (!USE_IMU) {
             f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
         }
+
         // 三角化当前帧特征点
         f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
+
         // 滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
         optimization();
+
+        // 剔除outlier点：遍历特征点，计算观测帧与首帧观测帧之间的重投影误差，计算误差均值，超过3个像素则被剔除
         set<int> removeIndex;
-        /**
-         * 剔除outlier点
-         * 遍历特征点，计算观测帧与首帧观测帧之间的重投影误差，计算误差均值，超过3个像素则被剔除
-         */
         outliersRejection(removeIndex);
+
         // 实际调用剔除
         f_manager.removeOutlier(removeIndex);
+
+        // 单线程
         if (!MULTIPLE_THREAD) {
             featureTracker.removeOutliers(removeIndex);
             // 用当前帧与前一帧位姿变换，估计下一帧位姿，初始化下一帧特征点的位置
@@ -776,17 +794,20 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 
         // 移动滑窗，更新特征点的观测帧集合、观测帧索引（在滑窗中的位置）、首帧观测帧和深度值，删除没有观测帧的特征点
         slideWindow();
+
         // 删除优化后深度值为负的特征点
         f_manager.removeFailures();
+
         // prepare output of VINS
         key_poses.clear();
         for (int i = 0; i <= WINDOW_SIZE; i++)
             key_poses.push_back(Ps[i]);
 
-        last_R = Rs[WINDOW_SIZE];
+        last_R = Rs[WINDOW_SIZE];   // 记录滑窗中最后一帧的旋转
         last_P = Ps[WINDOW_SIZE];
-        last_R0 = Rs[0];
+        last_R0 = Rs[0];    // 记录滑窗中最早一帧的旋转
         last_P0 = Ps[0];
+
         // 用优化后的当前帧位姿更新IMU积分的基础位姿，用于展示IMU轨迹
         updateLatestStates();
     }
@@ -1915,7 +1936,7 @@ void Estimator::fastPredictIMU(double t, Eigen::Vector3d linear_acceleration, Ei
 
     // 6. 更新为 当前时刻的 位置P: p0 + v0 t + 1/2 a t^2
     latest_P = latest_P + dt * latest_V + 0.5 * dt * dt * un_acc;
-    // 更新为 当前时刻的 速度V: v0 + a t
+    // 7. 更新为 当前时刻的 速度V: v0 + a t
     latest_V = latest_V + dt * un_acc;
 
     // 上一时刻测得的IMU数据 更新为 当前时刻的值

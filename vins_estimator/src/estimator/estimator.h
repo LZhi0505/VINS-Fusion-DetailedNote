@@ -88,8 +88,10 @@ public:
 
     queue<pair<double, Eigen::Vector3d>> accBuf; // IMU的加速度数据buf，key：时间戳, value：加速度{acc_x, acc_y, acc_z}
     queue<pair<double, Eigen::Vector3d>> gyrBuf; // IMU的角速度数据buf，key：时间戳, value：角速度 {gyr_x, gyr_y, gyr_z}
-    // 特征点buf。key: 时间戳, value: 左右目特征点信息 {feature_id，[camera_id (0为左目，1为右目), x, y, z (去畸变的归一化相机平面坐标), pu, pv (像素坐标),
-    // vx,vy (归一化相机平面（也可能是像素坐标）速度)]}
+
+    // featureTracker 追踪的 当前帧特征点信息
+    // key:时间戳,
+    // value:左右目特征点信息{feature_id，[camera_id(0为左目，1为右目),x,y,z(去畸变的归一化相机平面坐标),pu,pv(像素坐标),vx,vy(归一化相机平面（也可能是像素坐标）速度)]}
     queue<pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>>>> featureBuf;
 
     double prevTime, curTime; // 图像上一帧时间，图像当前帧时间
@@ -104,20 +106,20 @@ public:
     MarginalizationFlag marginalization_flag; // 边缘化策略 MARGIN_OLD | MARGIN_SECOND_NEW
     Vector3d g;                               // 重力
 
-    Matrix3d ric[2]; // 相机的外参矩阵imu_R_cam
-    Vector3d tic[2]; // imu_t_cam
+    Matrix3d ric[2]; // 相机的外参矩阵 imu_R_cam，Rbc
+    Vector3d tic[2]; // imu_t_cam，tbc
 
     // 滑动窗口，待优化的变量，刚开始是通过IMU预积分得到初始值，后面会通过相机进一步优化
-    Vector3d Ps[(WINDOW_SIZE + 1)];  // 位置，world_t_imu
-    Vector3d Vs[(WINDOW_SIZE + 1)];  // 速度，w_V_imu
-    Matrix3d Rs[(WINDOW_SIZE + 1)];  // 位姿：world_R_imu
+    Vector3d Ps[(WINDOW_SIZE + 1)];  // 位置，world_t_imu，Pwb
+    Vector3d Vs[(WINDOW_SIZE + 1)];  // 速度，world_V_imu，Vwb
+    Matrix3d Rs[(WINDOW_SIZE + 1)];  // 旋转，world_R_imu，Rwb
     Vector3d Bas[(WINDOW_SIZE + 1)]; // 加速度计零偏
     Vector3d Bgs[(WINDOW_SIZE + 1)]; // 陀螺仪零偏
     double td;                       // 相机和imu话题的时间差：cam_time + td = imu_time
 
-    // back_R0、back_P0：暂时保存的待边缘化的最老关键帧的位姿: world_T_imu
-    // 上一帧位姿
-    // 上一次滑窗首帧位姿
+    // back_R0、back_P0：暂时保存的待边缘化的最老关键帧的位姿: world_R_imu
+    // last_R、last_P：上一次帧滑窗中最末帧的位姿，Rwb
+    // last_R0、last_P0：上一次滑窗中最早帧的位姿
     Matrix3d back_R0, last_R, last_R0;
     Vector3d back_P0, last_P, last_P0;
 
@@ -135,7 +137,7 @@ public:
     // sum_of_back是边缘化最老帧的次数、sum_of_front是边缘化次新帧的次数
     int sum_of_outlier, sum_of_back, sum_of_front, sum_of_invalid;
 
-    int inputImageCnt; // 输入图片数目的计数器
+    int inputImageCnt; // 输入图片个数的计数器
 
     FeatureManager f_manager; //! 对滑动窗口内所有特征点的管理
 
