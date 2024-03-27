@@ -83,8 +83,11 @@ public:
     vector<int> track_cnt;
 
     // 字典，cur_un_pts_map为当前帧左目的（ids，cur_un_pts 归一化相机x,y坐标），prev_un_pts_map为上一帧的（ids，prev_un_pts 归一化相机x,y坐标）
-    map<int, cv::Point2f> cur_un_pts_map, prev_un_pts_map; // index: 当前帧左目特征点id, value: 对应去畸变的在归一化平面上的坐标
+    map<int, cv::Point2f> cur_un_pts_map, prev_un_pts_map; // key: 当前帧左目特征点id, value: 对应去畸变的在归一化平面上的坐标
     map<int, cv::Point2f> cur_un_right_pts_map, prev_un_right_pts_map;
+
+    // 存储左右目特征点的匹配关系
+    vector<cv::Point2f> curLeftPtsTrackRight; // key: 右目特征点ID；value：左目特征点
 
     // 字典，上一帧左目的（ids，cur_pts 像素坐标）
     map<int, cv::Point2f> prevLeftPtsMap;

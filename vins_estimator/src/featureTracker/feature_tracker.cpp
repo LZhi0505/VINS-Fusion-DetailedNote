@@ -89,6 +89,7 @@ void FeatureTracker::setMask() {
     sort(cnt_pts_id.begin(), cnt_pts_id.end(),
          [](const pair<int, pair<cv::Point2f, int>> &a, const pair<int, pair<cv::Point2f, int>> &b) { return a.first > b.first; });
 
+    // 先清空
     cur_pts.clear();
     ids.clear();
     track_cnt.clear();
@@ -96,14 +97,14 @@ void FeatureTracker::setMask() {
     // 非极大值抑制，相当于在一个圆区域中只保留跟踪次数最多的特征点
     // 按当前帧特征点的跟踪次数遍历
     for (auto &it : cnt_pts_id) {
-        // 如果对应位置上mask的值为255（白色），即 说明该特征点符合要求，则再存入其信息，并将它在mask对应位置的值置为0，表示删除其半径为30个像素内的特征点
+        // 如果对应位置上mask的值为255（白色），即说明该特征点符合要求，则再存入其信息，保留该特征点；
+        // 并将它在mask对应位置周围半径MIN_DIST范围内的值置为0，表示删除其半径为30个像素内的特征点
         if (mask.at<uchar>(it.second.first) == 255) {
-            // 如果特征点所在区域不在圆领域中就保留该特征点，并在该特征点附近画一个圆区域
-            // 清空重新加进来，排了个序
+            // 上面清空了，再重新加进来，并已按跟踪次数排序
             cur_pts.push_back(it.second.first); // 再次存入该特征点到 cur_pts中
             ids.push_back(it.second.second);    // id也存入
             track_cnt.push_back(it.first);      // 特征点跟踪次数也存入
-            // 在mask对应该特征点位置画个黑圈
+            // 在mask对应位置画个黑圈
             cv::circle(mask,            // 画圈的图像
                        it.second.first, // 圆心位置
                        MIN_DIST,        // 半径为30个像素
@@ -148,13 +149,13 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
     col = cur_img.cols;
     cv::Mat rightImg = _img1;
     // 可添加直方图均衡化
-    //    {
-    //        创建一个clahe对象，用于执行直方图均衡加，3.0表示对比度阈值，cv::Size(8,
-    //        8)表示块大小 cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0,
-    //        cv::Size(8, 8)); clahe->apply(cur_img, cur_img);
-    //        if(!rightImg.empty())
-    //            clahe->apply(rightImg, rightImg);
-    //    }
+    {
+        // 创建一个clahe对象，用于执行直方图均衡加，3.0表示对比度阈值，cv::Size(8, 8)表示块大小
+        cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
+        clahe->apply(cur_img, cur_img);
+        if(!rightImg.empty())
+            clahe->apply(rightImg, rightImg);
+    }
     cur_pts.clear();
 
     // 上一帧有左目的特征点（不是第一帧），则直接进行LK光流追踪当前帧的特征点
@@ -170,7 +171,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
         if (hasPrediction) {
             cur_pts = predict_pts; // 用预测模块预测的特征点位置作为光流法迭代初始值
 
-            // 使用光流法对上一帧的特征点进行跟踪，得到当前帧的特征点位置（金字塔为1层，总共2层）
+            // 使用光流法跟踪上一帧的特征点，得到当前帧的特征点位置（金字塔为1层，总共2层）
             cv::calcOpticalFlowPyrLK(
                 prev_img, cur_img, // 上一帧图片，当前帧图片
                 prev_pts, cur_pts, // 上一帧左目的特征点，输出的当前帧左目的特征点
@@ -197,11 +198,10 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
             // LK光流跟踪两帧图像特征点
             cv::calcOpticalFlowPyrLK(prev_img, cur_img, prev_pts, cur_pts, status, err, cv::Size(21, 21), 3);
 
-        // 1.2 反向光流法，提高光流法跟踪到的特征点匹配正确率
-        // 即用前面跟踪到的当前帧特征点，反向跟踪上一帧的特征点
+        // 1.2 反向光流法，即在上一帧图像中跟踪 得到的当前帧特征点，提高光流法跟踪到的特征点匹配正确率
         if (FLOW_BACK) {
             vector<uchar> reverse_status;
-            vector<cv::Point2f> reverse_pts = prev_pts;
+            vector<cv::Point2f> reverse_pts = prev_pts; // 反向匹配的点
 
             cv::calcOpticalFlowPyrLK(cur_img, prev_img, cur_pts, reverse_pts, reverse_status, err, cv::Size(21, 21), 1,
                                      cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 0.01), cv::OPTFLOW_USE_INITIAL_FLOW);
@@ -209,7 +209,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
 
             // 遍历正向匹配中有效的点
             for (size_t i = 0; i < status.size(); i++) {
-                // 只有正向、反向都匹配成功，且 反向匹配的点与原始点距离<=0.5个像素，才最终认为跟踪成功
+                // 只有正向、反向都匹配成功，且 反向匹配的点与上一帧的原始特征点的距离<=0.5个像素，才最终认为跟踪成功
                 if (status[i] && reverse_status[i] && distance(prev_pts[i], reverse_pts[i]) <= 0.5) {
                     status[i] = 1;
                 } else
@@ -288,7 +288,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
     // 4. 计算当前帧左目归一化相机平面上的特征点 在x、y方向上的移动速度
     pts_velocity = ptsVelocity(ids, cur_un_pts, cur_un_pts_map, prev_un_pts_map);
 
-    // 5.如果是双目还需要对右目图片同样的操作，只不过右目特征点只会用左目特征点光流跟踪得到，不会提取新的特征点
+    // 5.如果是双目，则对右目做相同操作，光流跟踪左目特征点 得到右目特征点，且 不提取新的特征点
     if (!_img1.empty() && stereo_cam) {
         ids_right.clear();
         cur_right_pts.clear();
@@ -299,8 +299,8 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
         // 左目存在特征点，则提取右目的
         if (!cur_pts.empty()) {
             // printf("stereo image; track feature on right image\n");
-            vector<cv::Point2f> reverseLeftPts;
-            vector<uchar> status, statusRightLeft;
+            vector<cv::Point2f> reverseLeftPts;    // 存储 在左目中跟踪 得到的右目特征点
+            vector<uchar> status, statusRightLeft; // 存储 在左目中跟踪 得到的右目特征点 的状态
             vector<float> err;
             // cur left ---- cur right
             // 当前帧左目-右目之间 进行特征点匹配：在右目上追踪左目的特征点
@@ -309,11 +309,16 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
             // 反向光流法检测
             if (FLOW_BACK) {
                 cv::calcOpticalFlowPyrLK(rightImg, cur_img, cur_right_pts, reverseLeftPts, statusRightLeft, err, cv::Size(21, 21), 3);
+                // 遍历正向匹配的点
                 for (size_t i = 0; i < status.size(); i++) {
-                    if (status[i] && statusRightLeft[i] && inBorder(cur_right_pts[i]) && distance(cur_pts[i], reverseLeftPts[i]) <= 0.5)
+                    // 正反向都匹配到 且  右目的点在图像内 且 反向得到的点与左目原始特征点的误差<0.5个像素
+                    if (status[i] && statusRightLeft[i] && inBorder(cur_right_pts[i]) && distance(cur_pts[i], reverseLeftPts[i]) <= 0.5) {
                         status[i] = 1;
-                    else
+                        // 保存左右目的匹配关系，用于划线
+                        curLeftPtsTrackRight[i] = cur_pts[i]; // key: 右目特征点ID；value：左目特征点
+                    } else {
                         status[i] = 0;
+                    }
                 }
             }
 
@@ -446,8 +451,8 @@ void FeatureTracker::rejectWithF() {
 }
 
 /**
- * 读取内参构建camera
- * @param calib_file 左右目相机的内参文件路径
+ * 读取左右目相机内参，并构建相机模型 camera
+ * @param calib_file 存储 左右目相机的内参文件的 路径
  */
 void FeatureTracker::readIntrinsicParameter(const vector<string> &calib_file) {
 
@@ -500,15 +505,14 @@ void FeatureTracker::showUndistortion(const string &name) {
 
 /**
  * @brief 对特征点2D像素坐标去畸变，并转为 相机平面坐标（只包含x,y）
- * @param pts 2D像素坐标
+ * @param pts 当前帧特征点的 2D像素坐标
  * @param cam 相机模型
  * @return 返回处理后的无畸变的归一化相机坐标
  */
 vector<cv::Point2f> FeatureTracker::undistortedPts(vector<cv::Point2f> &pts, camodocal::CameraPtr cam) {
     vector<cv::Point2f> un_pts;
     for (unsigned int i = 0; i < pts.size(); i++) {
-        // 特征点像素坐标
-        Eigen::Vector2d a(pts[i].x, pts[i].y);
+        Eigen::Vector2d a(pts[i].x, pts[i].y); // 像素坐标
         Eigen::Vector3d b;
         // 像素点计算归一化相机平面点，带畸变校正
         cam->liftProjective(a, b); // liftProjective函数不是得到2D特征点对应的3D地图点，而是其投影射线点
@@ -567,48 +571,71 @@ vector<cv::Point2f> FeatureTracker::ptsVelocity(vector<int> &ids, vector<cv::Poi
 }
 
 /**
- * 展示，左图特征点用颜色区分跟踪次数（红色少，蓝色多），画个箭头指向前一帧特征点位置，如果是双目，右图画个绿色点
- * @param imLeft            当前帧左图
- * @param imRight           当前帧右图
- * @param curLeftIds        当前帧左图特征点id
- * @param curLeftPts        当前帧左图特征点
- * @param curRightPts       当前帧右图特征点
- * @param prevLeftPtsMap    前一帧左图特征点
+ * 绘制跟踪图片，也就是添加了特征点识别结果的图片
+ * 对于左目特征点：跟踪次数<20的，标记为蓝色点；跟踪次数>20的，标记为红色点
+ * 对于右目特征点：统一标记为绿色
+ * 对于上一帧左目特征点中跟踪成功的特征点：使用绿色箭头绘制出来
+ * @param imLeft            当前帧左目图片
+ * @param imRight           当前帧右目图片
+ * @param curLeftIds        当前帧左图特征点ID
+ * @param curLeftPts        当前帧左目识别到的特征点
+ * @param curRightPts       当前帧右目识别到的特征点
+ * @param prevLeftPtsMap    上一帧图像左目的特征点和ID
  */
 void FeatureTracker::drawTrack(const cv::Mat &imLeft, const cv::Mat &imRight, vector<int> &curLeftIds, vector<cv::Point2f> &curLeftPts,
                                vector<cv::Point2f> &curRightPts, map<int, cv::Point2f> &prevLeftPtsMap) {
     // int rows = imLeft.rows;
     int cols = imLeft.cols;
-    // 单目用左图，双目左右图放一起
+    // 单目用左图，双目左右目图偏水平拼接
     if (!imRight.empty() && stereo_cam)
         cv::hconcat(imLeft, imRight, imTrack);
     else
         imTrack = imLeft.clone();
     cv::cvtColor(imTrack, imTrack, cv::COLOR_GRAY2RGB);
 
-    // 左图特征点画个圈，红色跟踪次数少，蓝色跟踪次数多
+    // 绘制左目特征点。蓝色：跟踪次数<20；红色：跟踪次数>20
     for (size_t j = 0; j < curLeftPts.size(); j++) {
-        double len = std::min(1.0, 1.0 * track_cnt[j] / 20);
-        cv::circle(imTrack, curLeftPts[j], 2, cv::Scalar(255 * (1 - len), 0, 255 * len), 2);
+        double len = std::min(1.0, 1.0 * track_cnt[j] / 20);  // <20,=0; >20,=1
+        cv::circle(imTrack,                                   // 绘制图像
+                   curLeftPts[j],                             // 圆心位置
+                   2,                                         // 半径
+                   cv::Scalar(255 * (1 - len), 0, 255 * len), // 颜色BGR对应通道的值
+                   2);                                        // <0，实心圆；>0空心圆的线宽
     }
-    // 右图特征点画个绿色
+
+    // 绘制右目特征点
     if (!imRight.empty() && stereo_cam) {
         for (size_t i = 0; i < curRightPts.size(); i++) {
             cv::Point2f rightPt = curRightPts[i];
             rightPt.x += cols;
-            cv::circle(imTrack, rightPt, 2, cv::Scalar(0, 255, 0), 2);
-            // cv::Point2f leftPt = curLeftPtsTrackRight[i];
-            // cv::line(imTrack, leftPt, rightPt, cv::Scalar(0, 255, 0), 1, 8, 0);
+            cv::circle(imTrack, rightPt, 2, cv::Scalar(0, 255, 0), 2); // 绿色
+            // 连左右目的匹配线
+            cv::Point2f leftPt = curLeftPtsTrackRight[i];
+            cv::line(imTrack,
+                     leftPt,                // 直线起点
+                     rightPt,               // 直线终点
+                     cv::Scalar(0, 255, 0), // 线的颜色：BGR
+                     1,                     // 线条粗细
+                     8,                     // 线条类型：8邻接连接线
+                     0);                    // 点坐标的小数位数
         }
     }
 
-    // 左图特征点画个箭头指向前一帧特征点位置
+    // 绘制上一帧左目特征点中 在当前帧跟踪成功的点 (当前帧 指向 上一帧)
     map<int, cv::Point2f>::iterator mapIt;
     for (size_t i = 0; i < curLeftIds.size(); i++) {
         int id = curLeftIds[i];
         mapIt = prevLeftPtsMap.find(id);
+        // 当前帧特征点ID 在 上一帧特征点ID集合中
         if (mapIt != prevLeftPtsMap.end()) {
-            cv::arrowedLine(imTrack, curLeftPts[i], mapIt->second, cv::Scalar(0, 255, 0), 1, 8, 0, 0.2);
+            cv::arrowedLine(imTrack,
+                            curLeftPts[i],         // 箭头起点
+                            mapIt->second,         // 箭头终点
+                            cv::Scalar(0, 255, 0), // 箭头的颜色：BGR
+                            1,                     // 线条粗细
+                            8, // 线条类型：1就是FILLED（填满），4是LINE_4（4连通域），8是LINE_8（8连通域），LINE_AA（抗锯齿线）
+                            0, // 点坐标的小数位数，默认为 0
+                            0.2); // 箭头部分长度与线段长度的比例，默认为 0.1
         }
     }
 

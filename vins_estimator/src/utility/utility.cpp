@@ -25,14 +25,13 @@ Eigen::Matrix3d Utility::g2R(const Eigen::Vector3d &g) {
     R0 = Eigen::Quaterniond::FromTwoVectors(ng1, ng2).toRotationMatrix(); // ng2_R0_ng1
 
     // 测试代码
-    // static bool done = false;
-    // if(!done)
-    // {
-    //     std::cout << "ng1:" << ng1.transpose() << ",ng2:" << ng2.transpose() << std::endl;
-    //     std::cout << "R0:" << std::endl << R0 << std::endl;
-    //     std::cout << "R0*ng1:" << R0 * ng1 << std::endl;
-    //     std::cout << "R0*ng2:" << R0 * ng2 << std::endl;
-    // }
+    static bool done = false;
+    if (!done) {
+        std::cout << "ng1: " << ng1.transpose() << std::endl << "ng2: " << ng2.transpose() << std::endl;
+        std::cout << "R0: " << std::endl << R0 << std::endl;
+        std::cout << "R0*ng1: " << (R0 * ng1).x() << " " << (R0 * ng1).y() << " " << (R0 * ng1).z() << std::endl;
+        std::cout << "R0*ng2: " << (R0 * ng2).x() << " " << (R0 * ng2).y() << " " << (R0 * ng2).z() << std::endl;
+    }
 
     // 确保最终的旋转矩阵在偏航角上与原始R0相反，从而确保IMU的Z轴与重力加速度方向完全对齐
     // 取出yaw角（绕z轴旋转）
@@ -41,13 +40,13 @@ Eigen::Matrix3d Utility::g2R(const Eigen::Vector3d &g) {
     // R0 = Utility::ypr2R(Eigen::Vector3d{-90, 0, 0}) * R0;
 
     // 测试代码
-    // if(!done)
-    // {
-    //     done = true;
-    //     std::cout << "yaw:" << yaw << std::endl;
-    //     std::cout << "R0*ng1:" << R0 * ng1 << std::endl;
-    //     std::cout << "R0*ng2:" << R0 * ng2 << std::endl;
-    // }
+    if (!done) {
+        done = true;
+        std::cout << "yaw: " << yaw << std::endl;
+        std::cout << "R0: " << std::endl << R0 << std::endl;
+        std::cout << "R0*ng1: " << (R0 * ng1).x() << " " << (R0 * ng1).y() << " " << (R0 * ng1).z() << std::endl;
+        std::cout << "R0*ng2: " << (R0 * ng2).x() << " " << (R0 * ng2).y() << " " << (R0 * ng2).z() << std::endl;
+    }
 
     return R0;
 }

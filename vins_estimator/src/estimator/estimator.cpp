@@ -120,7 +120,7 @@ void Estimator::setParameter() {
     g = G;
     cout << "set g " << g.transpose() << endl;
 
-    // 特征点跟踪器，读取左右目相机内参，并实例化相机
+    // 特征点跟踪器，读取左右目相机内参，并实例化相机模型
     featureTracker.readIntrinsicParameter(CAM_NAMES);
 
     std::cout << "MULTIPLE_THREAD is " << MULTIPLE_THREAD << '\n';
@@ -195,6 +195,7 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1) 
     // 2. 发布加上特征点后的图片（用蓝点和红点标注跟踪次数不同的特征点，红色少，蓝色多，画箭头指向前一帧特征点位置；如果是双目，右图画个绿色点）
     if (SHOW_TRACK) {
         cv::Mat imgTrack = featureTracker.getTrackImage();
+        cv::imshow("tracking", imgTrack);
         pubTrackImage(imgTrack, t);
     }
 
